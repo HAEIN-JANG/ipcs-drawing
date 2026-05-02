@@ -1,0 +1,10 @@
+streamlit
+supabase
+pandas
+openpyxl
+xlsxwriter
+cloudinary
+python-dotenv
+Flask
+gunicorn
+werkzeug
