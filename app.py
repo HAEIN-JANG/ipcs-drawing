@@ -108,7 +108,7 @@ def get_supabase() -> Client:
     if not url or not key:
         st.error("Missing Supabase configuration")
         st.stop()
-    options = ClientOptions(schema="public")
+    options = ClientOptions(schema="drawing")
     return create_client(url, key, options=options)
 
 # Configure Cloudinary

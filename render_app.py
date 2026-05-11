@@ -21,7 +21,7 @@ def get_supabase() -> Client:
     key = get_secret("SUPABASE_KEY")
     if not url or not key:
         raise ValueError("Missing Supabase configuration")
-    options = ClientOptions(schema="public")
+    options = ClientOptions(schema="drawing")
     return create_client(url, key, options=options)
 
 c_name = get_secret("CLOUDINARY_NAME")
