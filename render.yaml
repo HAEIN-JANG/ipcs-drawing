@@ -1,6 +1,6 @@
 services:
   - type: web
-    name: ipcs-drawing-service
+    name: ipcs-drawing
     env: python
     buildCommand: pip install -r requirements.txt
     startCommand: gunicorn render_app:app
