@@ -32,6 +32,7 @@ if all([c_name, c_key, c_secret]):
 
 TABLE_ALL = "dwg_iso"
 TABLE_LATEST = "dwg_latest"
+TABLE_SUPPORT = "support_master"
 
 def get_cloudinary_url(file_key):
     if not file_key: return None
@@ -184,6 +185,152 @@ def api_export():
 @app.route("/api/print")
 def api_print():
     return "Print report not yet fully implemented for web layout.", 200
+
+@app.route("/api/support/stats")
+def api_support_stats():
+    try:
+        supabase = get_supabase()
+        res = supabase.table(TABLE_SUPPORT).select("id", count="exact").limit(1).execute()
+        return jsonify({"total": res.count if hasattr(res, 'count') else 0})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route("/api/support/filters")
+def api_support_filters():
+    return jsonify({
+        "systems": ["AS", "ATM", "CCW", "CD", "DW", "FG", "FGH", "FO", "FW", "GT MISC", "HP", "HW", "IA", "LO", "LP", "N2", "PW", "RW", "SA", "SS", "ST MISC", "SW", "WWT"],
+        "revisions": ["C01", "C01A", "C01B"]
+    })
+
+@app.route("/api/support/drawings")
+def api_support_drawings():
+    try:
+        search = request.args.get("search", "").strip()
+        system = request.args.get("system", "")
+        page = int(request.args.get("page", 1))
+        per_page = int(request.args.get("per_page", 20))
+        offset = (page - 1) * per_page
+
+        supabase = get_supabase()
+        query = supabase.table("support_latest").select("*", count="exact")
+        if search:
+            query = query.or_(f"support_drawing.ilike.%{search}%,line_no.ilike.%{search}%")
+        if system:
+            query = query.eq("system", system)
+
+        res = query.order("system").order("support_drawing").range(offset, offset + per_page - 1).execute()
+
+        for d in res.data:
+            d['title'] = d.get('type', '')
+            fk = d.get('file_link', '')
+            if fk and 'res.cloudinary.com' not in fk:
+                d['file_link'] = None
+
+        return jsonify({"total": res.count, "data": res.data})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route("/api/support/upload", methods=["POST"])
+def api_support_upload():
+    try:
+        file = request.files.get("file")
+        if not file:
+            return jsonify({"error": "No file shared"}), 400
+        df = pd.read_excel(io.BytesIO(file.read()), sheet_name=0)
+        df.columns = [str(c).lower().strip() for c in df.columns]
+        df = df.fillna("")
+        records = df.to_dict("records")
+        supabase = get_supabase()
+
+        batch = []
+        for r in records:
+            sup_dwg = str(r.get("support drawing", "")).strip()
+            if not sup_dwg:
+                continue
+            batch.append({
+                "system":          str(r.get("system", "")).strip(),
+                "support_drawing": sup_dwg,
+                "type":            str(r.get("type", "")).strip(),
+                "iso_drawing":     str(r.get("iso drawing", r.get("iso drawubg", ""))).strip(),
+                "line_no":         str(r.get("line no", "")).strip(),
+                "l1":              str(r.get("l1", "")).strip(),
+                "l2":              str(r.get("l2", "")).strip(),
+                "l3":              str(r.get("l3", "")).strip(),
+                "l4":              str(r.get("l4", "")).strip(),
+                "revision":        str(r.get("revision", "")).strip(),
+                "issued_date":     str(r.get("issue date", "")).strip(),
+                "file_link":       ""
+            })
+
+        inserted_count = 0
+        if batch:
+            for i in range(0, len(batch), 500):
+                chunk = batch[i:i+500]
+                supabase.table(TABLE_SUPPORT).upsert(chunk, on_conflict="support_drawing,revision").execute()
+                inserted_count += len(chunk)
+
+        return jsonify({"success": True, "inserted": inserted_count, "processed": len(batch), "skipped": 0, "failed": 0})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route("/api/support/sync-links", methods=["POST"])
+def api_support_sync_links():
+    try:
+        import cloudinary.api
+        cld_url = os.environ.get("CLOUDINARY_URL", "")
+        m = re.match(r"cloudinary://([^:]+):([^@]+)@(.+)", cld_url)
+        if not m:
+            return jsonify({"error": "CLOUDINARY_URL 설정 오류"}), 400
+        cloud_name = m.group(3)
+        cloudinary.config(api_key=m.group(1), api_secret=m.group(2), cloud_name=cloud_name)
+
+        supabase = get_supabase()
+        supabase.table(TABLE_SUPPORT).update({"file_link": ""}).neq("id", 0).execute()
+
+        master_data = []
+        page_from = 0
+        page_size = 1000
+        while True:
+            res_page = supabase.table(TABLE_SUPPORT).select("id, support_drawing, revision, system").range(page_from, page_from + page_size - 1).execute()
+            if not res_page.data:
+                break
+            master_data.extend(res_page.data)
+            if len(res_page.data) < page_size:
+                break
+            page_from += page_size
+
+        uploaded_files = set()
+        next_cursor = None
+        while True:
+            kwargs = {"type": "upload", "max_results": 500}
+            if next_cursor:
+                kwargs["next_cursor"] = next_cursor
+            res = cloudinary.api.resources(**kwargs)
+            for item in res.get('resources', []):
+                uploaded_files.add(item['public_id'].split('/')[-1])
+            next_cursor = res.get('next_cursor')
+            if not next_cursor:
+                break
+
+        updates = []
+        for row in master_data:
+            dwg = row.get("support_drawing")
+            rev = row.get("revision")
+            if not dwg or not rev:
+                continue
+            safe_dwg = str(dwg).replace('"', '').replace('/', '_')
+            filename = f"{safe_dwg}_{str(rev).upper()}"
+            filename_with_ext = f"{filename}.pdf"
+            if filename in uploaded_files or filename_with_ext in uploaded_files:
+                updates.append({"id": row["id"], "file_link": f"https://res.cloudinary.com/{cloud_name}/image/upload/{filename_with_ext}"})
+
+        if updates:
+            for i in range(0, len(updates), 1000):
+                supabase.table(TABLE_SUPPORT).upsert(updates[i:i+1000]).execute()
+
+        return jsonify({"success": True, "synced": len(updates), "message": f"{len(updates)}개 도면 링크 연결 완료"})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8080)), debug=True)
