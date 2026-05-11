@@ -3,7 +3,7 @@ services:
     name: ipcs-drawing
     env: python
     buildCommand: pip install -r requirements.txt
-    startCommand: gunicorn render_app:app
+    startCommand: gunicorn render_app:app --workers 1 --threads 2 --timeout 120 --max-requests 300 --max-requests-jitter 30
     envVars:
       - key: PYTHON_VERSION
         value: 3.10.0
