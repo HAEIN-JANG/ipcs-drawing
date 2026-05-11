@@ -407,7 +407,7 @@
 
     /* ─── Main content ───────────────────────────── */
     .main {
-      padding: 16px 24px 40px;
+      padding: 16px 24px 10px;
     }
 
     /* ─── Group header ───────────────────────────── */
@@ -526,49 +526,50 @@
 
     /* 컬럼 너비 조정 */
     .col-no {
-      width: 90px;
-      min-width: 90px;
-    }
-
-    .col-bore {
-      width: 100px;
-      min-width: 100px;
-    }
-
-    .col-area {
-      width: 130px;
-      min-width: 130px;
+      width: 50px;
+      min-width: 50px;
     }
 
     .col-sys {
-      width: 130px;
-      min-width: 130px;
+      width: 120px;
+      min-width: 120px;
     }
 
     .col-dwg {
-      width: 320px;
-      min-width: 320px;
+      width: 300px;
+      min-width: 300px;
     }
 
     .col-line {
-      width: 260px;
-      min-width: 260px;
+      width: 300px;
+      min-width: 300px;
     }
 
     .col-title {
       width: auto;
-      min-width: 450px;
+      min-width: 300px;
     }
 
     .col-rev {
-      width: 140px;
-      min-width: 140px;
+      width: 120px;
+      min-width: 120px;
     }
 
     .col-date {
-      width: 140px;
-      min-width: 140px;
+      width: 120px;
+      min-width: 120px;
     }
+
+    /* Support Specific Columns */
+    .col-sup-no { width: 40px; min-width: 40px; }
+    .col-sup-sys { width: 60px; min-width: 60px; }
+    .col-sup-dwg { width: 220px; min-width: 200px; }
+    .col-sup-type { width: 100px; min-width: 100px; }
+    .col-sup-iso { width: 180px; min-width: 180px; }
+    .col-sup-line { width: 180px; min-width: 180px; }
+    .col-sup-lx { width: 40px; min-width: 35px; }
+    .col-sup-rev { width: 60px; min-width: 60px; }
+    .col-sup-date { width: 80px; min-width: 80px; }
 
     /* PDF & DWG Special Styles */
     .pdf-btn {
@@ -612,25 +613,7 @@
       cursor: default;
     }
 
-    .bore-badge {
-      display: inline-block;
-      font-size: 9px;
-      font-weight: 600;
-      padding: 2px 6px;
-      border-radius: 3px;
-      font-family: var(--font-mono);
-      letter-spacing: .3px;
-    }
 
-    .bore-lb {
-      background: #dbeafe;
-      color: #1e40af;
-    }
-
-    .bore-sb {
-      background: #fce7f3;
-      color: #9d174d;
-    }
 
     .rev-badge {
       display: inline-block;
@@ -708,7 +691,7 @@
       align-items: center;
       justify-content: center;
       gap: 6px;
-      margin-top: 24px;
+      margin-top: 12px;
     }
 
     .page-btn {
@@ -1081,24 +1064,28 @@
         <div class="header-divider"></div>
         <div class="header-stats">
           <div class="hstat">
-            <div class="hstat-val white" id="stat-total">—</div>
+            <div class="hstat-val" id="stat-total">—</div>
             <div class="hstat-label">TOTAL</div>
           </div>
           <div class="hstat">
             <div class="hstat-val blue" id="stat-filtered">—</div>
             <div class="hstat-label">FILTERED</div>
           </div>
-          <div class="hstat" style="margin-left:5px">
-            <div class="hstat-val skyblue" id="stat-c01">—</div>
+          <div class="hstat">
+            <div class="hstat-val amber" id="stat-c01">—</div>
             <div class="hstat-label">C01</div>
           </div>
           <div class="hstat">
             <div class="hstat-val green" id="stat-c01a">—</div>
             <div class="hstat-label">C01A</div>
           </div>
-          <div class="hstat">
-            <div class="hstat-val amber" id="stat-c01b">—</div>
-            <div class="hstat-label">C01B</div>
+          <div class="actions">
+            <button class="btn-sync" onclick="runSyncLinks()" id="btn-sync">
+              <i class="fas fa-sync-alt"></i> Sync Links
+            </button>
+            <button class="btn-upload" onclick="openUploadModal()">
+              <i class="fas fa-file-upload"></i> Upload Excel
+            </button>
           </div>
         </div>
       </header>
@@ -1115,9 +1102,7 @@
         autocomplete="off" />
     </div>
 
-    <select class="filter-select" id="filter-subarea">
-      <option value="">ALL AREA</option>
-    </select>
+
 
     <select class="filter-select" id="filter-system">
       <option value="">ALL SYSTEM</option>
@@ -1221,9 +1206,9 @@
             </svg>
           </div>
           <div class="drop-zone-text">
-            <strong>클릭하여 파일 선택</strong> 또는 여기에 드래그
+            <span class="highlight">Click to select file</span> or drag here
+            <p>.xlsx files only · Max 20MB</p>
           </div>
-          <div class="drop-zone-sub">.xlsx 파일만 지원 · 최대 20MB</div>
         </div>
         <input type="file" id="file-input" accept=".xlsx,.xls" style="display:none" onchange="handleFileSelect(this)" />
 
@@ -1242,7 +1227,7 @@
           <div class="progress-bar-wrap">
             <div class="progress-bar-fill" id="progress-fill"></div>
           </div>
-          <div class="progress-text" id="progress-text">업로드 중...</div>
+          <div id="progress-text" class="progress-text">Ready to upload</div>
         </div>
 
         <!-- Result -->
@@ -1250,15 +1235,17 @@
 
         <!-- Rules -->
         <div class="upload-rules">
-          <strong>⚠️ 업로드 규칙</strong>
-          · 기존 도면(동일 DWG NO.)은 자동으로 최신 Revision으로 업데이트<br>
-          · 신규 도면은 자동 추가<br>
-          · Excel 컬럼: id / drawing_no / line_no / system / area / bore / title / revision / issued_date / file_link
+          <h4><i class="fas fa-exclamation-triangle"></i> Upload Rules</h4>
+          <ul>
+            <li>Existing drawings (same NO. & REV.) will be automatically updated.</li>
+            <li>New drawings will be automatically added to the master list.</li>
+            <li><strong>Excel Columns:</strong> system / support drawing / type / iso drawing / line_no / l1 / l2 / l3 / l4 / revision / issue date / file_link</li>
+          </ul>
         </div>
       </div>
 
       <div class="modal-footer">
-        <button class="btn btn-ghost" onclick="closeUploadModal()">취소</button>
+        <button class="btn-cancel" onclick="closeUploadModal()">Cancel</button>
         <button class="btn btn-upload" id="upload-btn" onclick="doUpload()">
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <polyline points="17 8 12 3 7 8" />
@@ -1300,16 +1287,24 @@
     function switchCategory(cat) {
       const anchorTable = document.getElementById('table-anchor');
       const anchorPlace = document.getElementById('placeholder-anchor');
-      
+
       state.category = cat;
       state.page = 1;
-      
+      // Reset filters on tab switch to avoid stale state
+      state.filters.search = '';
+      state.filters.area = '';
+      state.filters.system = '';
+      state.filters.status = '';
+      document.getElementById('search').value = '';
+      document.getElementById('filter-system').value = '';
+      document.getElementById('filter-status').value = '';
+
       // Update UI active state
       document.querySelectorAll('.nav-item').forEach(el => {
         const itemText = el.textContent.trim().toLowerCase();
         el.classList.toggle('active', itemText.startsWith(cat) || (cat === 'iso' && itemText.includes('iso')));
       });
-      
+
       // Update Title
       const titles = {
         iso: 'ISO DRAWING MASTER LIST',
@@ -1318,16 +1313,39 @@
         speciality: 'SPECIALITY DRAWING MASTER LIST'
       };
       document.getElementById('current-category-title').textContent = titles[cat] || titles.iso;
-      
-      // 교통 정리 (Visibility)
-      if (cat !== 'iso') {
-        if (anchorTable) anchorTable.style.display = 'none';
-        if (anchorPlace) anchorPlace.style.display = 'block';
-        renderPlaceholder(cat);
-      } else {
+
+      // Support 탭에서는 REV. 필터 숨기기 (support_latest는 최신 revision만 표시)
+      const statusFilter = document.getElementById('filter-status');
+      if (statusFilter) statusFilter.style.display = cat === 'support' ? 'none' : '';
+
+      // Sync Links 버튼은 Support 탭에서만 표시
+      const syncBtn = document.getElementById('btn-sync');
+      if (syncBtn) syncBtn.style.display = cat === 'support' ? '' : 'none';
+
+      // 탭별 헤더 통계 업데이트
+      if (cat === 'support') {
+        document.getElementById('stat-c01').textContent = '—';
+        document.getElementById('stat-c01a').textContent = '—';
+        fetch('/api/support/stats').then(r => r.json()).then(d => {
+          document.getElementById('stat-total').textContent = (d.total || 0).toLocaleString();
+        }).catch(() => {});
+      } else if (cat === 'iso') {
+        loadStats();
+      }
+
+      // Visibility
+      if (cat === 'iso') {
         if (anchorTable) anchorTable.style.display = 'block';
         if (anchorPlace) anchorPlace.style.display = 'none';
         loadDrawings();
+      } else if (cat === 'support') {
+        if (anchorTable) anchorTable.style.display = 'block';
+        if (anchorPlace) anchorPlace.style.display = 'none';
+        loadSupportDrawings();
+      } else {
+        if (anchorTable) anchorTable.style.display = 'none';
+        if (anchorPlace) anchorPlace.style.display = 'block';
+        renderPlaceholder(cat);
       }
     }
 
@@ -1360,30 +1378,35 @@
     }
 
     /* ─── Load Stats & Filters ────────────────────────── */
+    function applyStats(data) {
+      document.getElementById('stat-total').textContent = (data.total || 0).toLocaleString();
+      document.getElementById('stat-c01').textContent = (data.C01 || 0).toLocaleString();
+      document.getElementById('stat-c01a').textContent = (data.C01A || 0).toLocaleString();
+      document.getElementById('stat-c01b').textContent = (data.C01B || 0).toLocaleString();
+    }
+
     async function loadStats() {
       try {
         const res = await fetch('/api/stats');
-        const data = await res.json();
-        document.getElementById('stat-total').textContent = (data.total || 0).toLocaleString();
-        document.getElementById('stat-c01').textContent = (data.C01 || 0).toLocaleString();
-        document.getElementById('stat-c01a').textContent = (data.C01A || 0).toLocaleString();
-        document.getElementById('stat-c01b').textContent = (data.C01B || 0).toLocaleString();
+        applyStats(await res.json());
       } catch (e) { console.error('Error loading stats:', e); }
+    }
+
+    function applyFilters(data) {
+      const populate = (id, list, label) => {
+        const el = document.getElementById(id);
+        if (!el) return;
+        el.innerHTML = `<option value="">ALL ${label}</option>` +
+          list.map(v => `<option value="${v}">${v}</option>`).join('');
+      };
+      if (data.systems) populate('filter-system', data.systems, 'SYSTEM');
+      if (data.statuses) populate('filter-status', data.statuses, 'STATUS');
     }
 
     async function loadFilters() {
       try {
         const res = await fetch('/api/filters');
-        const data = await res.json();
-        const populate = (id, list, label) => {
-          const el = document.getElementById(id);
-          if (!el) return;
-          el.innerHTML = `<option value="">ALL ${label}</option>` +
-            list.map(v => `<option value="${v}">${v}</option>`).join('');
-        };
-        if (data.areas) populate('filter-subarea', data.areas, 'AREA');
-        if (data.systems) populate('filter-system', data.systems, 'SYSTEM');
-        if (data.statuses) populate('filter-status', data.statuses, 'STATUS');
+        applyFilters(await res.json());
       } catch (e) { console.error('Error loading filters:', e); }
     }
 
@@ -1402,6 +1425,9 @@
       try {
         const res = await fetch(`/api/drawings?${params}`);
         const data = await res.json();
+
+        // Prevent race conditions: if user switched tabs while fetching, ignore this data.
+        if (state.category !== 'iso') return;
 
         state.total = data.total || 0;
         state.data = data.data || [];
@@ -1424,6 +1450,8 @@
 
     /* ─── Render table ──────────────────────────────── */
     function renderTable() {
+      // Only render if we are on the ISO tab
+      if (state.category !== 'iso') return;
       const anchor = document.getElementById('table-anchor');
       const empty = document.getElementById('empty-state');
       const offset = (state.page - 1) * state.perPage;
@@ -1442,8 +1470,6 @@
         <thead>
           <tr>
             <th class="col-no">NO.</th>
-            <th class="col-bore">BORE</th>
-            <th class="col-area">AREA</th>
             <th class="col-sys">SYSTEM</th>
             <th class="col-dwg">DWG. NO.</th>
             <th class="col-line">LINE. NO.</th>
@@ -1456,9 +1482,6 @@
   `;
 
       state.data.forEach((d, idx) => {
-        const boreClass = String(d.bore || '').toUpperCase().includes('LARGE') || d.bore === 'LB' ? 'bore-lb' : 'bore-sb';
-        const boreLbl = String(d.bore || '').toUpperCase().includes('LARGE') || d.bore === 'LB' ? 'LB' : 'SB';
-
         let revC = 'rev-default';
         const r = String(d.revision || '').toUpperCase();
         if (r === 'C01A') revC = 'rev-green';
@@ -1472,14 +1495,12 @@
         tableHtml += `
       <tr>
         <td class="col-no">${offset + idx + 1}</td>
-        <td class="col-bore"><span class="bore-badge ${boreClass}">${boreLbl}</span></td>
-        <td class="col-area">${d.area || '—'}</td>
         <td class="col-sys">${d.system || '—'}</td>
         <td class="col-dwg">${dwgNoHtml}</td>
         <td class="col-line">${d.line_no || '—'}</td>
         <td class="col-title" style="text-align: left !important; padding-left: 15px;">${d.title || '—'}</td>
         <td class="col-rev"><span class="rev-badge ${revC}">${d.revision || '—'}</span></td>
-        <td class="col-date">${(d.issued_date || '').substring(0, 10).replace(/-/g, '.').substring(2) || '—'}</td>
+        <td class="col-date">${(d.issued_date || '').substring(2, 10) || '—'}</td>
       </tr>
     `;
       });
@@ -1500,7 +1521,15 @@
         b.className = 'page-btn' + (active ? ' active' : '');
         b.textContent = label;
         b.disabled = disabled;
-        if (!disabled && !active) b.onclick = () => { state.page = page; loadDrawings(); window.scrollTo(0, 0); };
+        if (!disabled && !active) b.onclick = () => { 
+          state.page = page; 
+          if (state.category === 'support') {
+            loadSupportDrawings();
+          } else {
+            loadDrawings();
+          }
+          window.scrollTo(0, 0); 
+        };
         pg.appendChild(b);
       };
 
@@ -1521,9 +1550,134 @@
       mkBtn('›', state.page + 1, false, state.page === totalPages);
     }
 
+    function updatePageInfo() {
+      const info = document.getElementById('page-info');
+      if (!info) return;
+      const totalPages = Math.ceil(state.total / state.perPage) || 1;
+      info.textContent = `Page ${state.page} / ${totalPages}`;
+    }
+
+    async function loadSupportDrawings() {
+      showLoading(true);
+      try {
+        const params = new URLSearchParams({
+          search: state.filters.search,
+          system: state.filters.system,
+          page: state.page,
+          per_page: state.perPage
+        });
+        const res = await fetch(`/api/support/drawings?${params}`);
+        const data = await res.json();
+        
+        // Prevent race condition
+        if (state.category !== 'support') return;
+
+        state.data = data.data || [];
+        state.total = data.total || 0;
+        document.getElementById('result-count').textContent = state.total.toLocaleString();
+        document.getElementById('stat-filtered').textContent = state.total.toLocaleString();
+        renderSupportTable();
+        renderPagination();
+        updatePageInfo();
+      } catch (e) {
+        console.error('Support Load Error:', e);
+        toast('Support 데이터를 불러오지 못했습니다.');
+      } finally {
+        showLoading(false);
+      }
+    }
+
+    function renderSupportTable() {
+      const anchor = document.getElementById('table-anchor');
+      const empty = document.getElementById('empty-state');
+      const offset = (state.page - 1) * state.perPage;
+
+      if (!state.data || !state.data.length) {
+        anchor.innerHTML = '';
+        if (empty) empty.style.display = 'flex';
+        return;
+      }
+      if (empty) empty.style.display = 'none';
+
+      let tableHtml = `
+        <div class="table-container">
+          <table>
+            <thead>
+              <tr>
+                <th class="col-sup-no">NO.</th>
+                <th class="col-sup-sys">SYSTEM</th>
+                <th class="col-sup-dwg">SUPPORT DRAWING</th>
+                <th class="col-sup-type">TYPE</th>
+                <th class="col-sup-iso">ISO DRAWING</th>
+                <th class="col-sup-line">LINE NO</th>
+                <th class="col-sup-lx">L1</th>
+                <th class="col-sup-lx">L2</th>
+                <th class="col-sup-lx">L3</th>
+                <th class="col-sup-lx">L4</th>
+                <th class="col-sup-rev">REV.</th>
+                <th class="col-sup-date">DATE</th>
+              </tr>
+            </thead>
+            <tbody>
+      `;
+
+      state.data.forEach((d, idx) => {
+        // Strictly use support_drawing first for this table
+        const dwgNo = d.support_drawing || '—';
+        const dwgLink = d.file_link ? 
+          `<a href="${d.file_link}" target="_blank" class="td-dwgno">${dwgNo}</a>` : 
+          `<span class="td-dwgno no-link">${dwgNo}</span>`;
+
+        tableHtml += `
+          <tr>
+            <td class="col-sup-no">${offset + idx + 1}</td>
+            <td class="col-sup-sys">${d.system || '—'}</td>
+            <td class="col-sup-dwg">${dwgLink}</td>
+            <td class="col-sup-type">${d.type || d.title || '—'}</td>
+            <td class="col-sup-iso">${d.iso_drawing || '—'}</td>
+            <td class="col-sup-line">${d.line_no || '—'}</td>
+            <td class="col-sup-lx">${d.l1 || '—'}</td>
+            <td class="col-sup-lx">${d.l2 || '—'}</td>
+            <td class="col-sup-lx">${d.l3 || '—'}</td>
+            <td class="col-sup-lx">${d.l4 || '—'}</td>
+            <td class="col-sup-rev">${d.revision || '—'}</td>
+            <td class="col-sup-date">${(d.issued_date || '').substring(2, 10) || '—'}</td>
+          </tr>
+        `;
+      });
+
+      tableHtml += `</tbody></table></div>`;
+      anchor.innerHTML = tableHtml;
+    }
+
     /* ─── Copy DWG NO ─────────────────────────────────── */
     function copyDwgNo(val) {
       navigator.clipboard.writeText(val).then(() => toast(`Copied: ${val}`));
+    }
+
+    /* ─── Sync Links ─────────────────────────────────── */
+    async function runSyncLinks() {
+      const btn = document.getElementById('btn-sync');
+      const originalHtml = btn.innerHTML;
+      
+      try {
+        btn.disabled = true;
+        btn.innerHTML = `<i class="fas fa-spinner fa-spin"></i> Syncing...`;
+        
+        const res = await fetch('/api/support/sync-links', { method: 'POST' });
+        const data = await res.json();
+        
+        if (data.error) throw new Error(data.error);
+        
+        toast(`✅ ${data.message}`);
+        fetchData(); // Refresh table
+      } catch (err) {
+        console.error(err);
+        toast(`❌ Sync Failed: ${err.message}`);
+      } finally {
+        btn.disabled = false;
+        btn.innerHTML = originalHtml;
+      }
     }
 
     /* ─── Upload Modal ───────────────────────────────── */
@@ -1606,7 +1760,8 @@
         const formData = new FormData();
         formData.append('file', selectedFile);
 
-        const res = await fetch('/api/upload', { method: 'POST', body: formData });
+        const uploadUrl = state.category === 'support' ? '/api/support/upload' : '/api/upload';
+        const res = await fetch(uploadUrl, { method: 'POST', body: formData });
         const data = await res.json();
 
         clearInterval(ticker);
@@ -1639,7 +1794,8 @@
       `;
 
           // 통계 & 목록 갱신
-          await Promise.all([loadStats(), loadDrawings()]);
+          const loadTask = state.category === 'support' ? loadSupportDrawings() : loadDrawings();
+          await Promise.all([loadStats(), loadTask]);
           if (data.new_total) {
             document.getElementById('stat-total').textContent = data.new_total.toLocaleString();
           }
@@ -1683,11 +1839,16 @@
     /* ─── Search Action ────────────────────────────── */
     function handleSearch() {
       state.filters.search = document.getElementById('search').value.trim();
-      state.filters.area = document.getElementById('filter-subarea').value;
+      state.filters.area = '';
       state.filters.system = document.getElementById('filter-system').value;
       state.filters.status = document.getElementById('filter-status').value;
       state.page = 1;
-      loadDrawings();
+      
+      if (state.category === 'support') {
+        loadSupportDrawings();
+      } else {
+        loadDrawings();
+      }
     }
 
     /* ─── Debounce ───────────────────────────────────── */
@@ -1701,11 +1862,11 @@
       if (e.key === 'Enter') handleSearch();
     });
 
-    ['filter-subarea', 'filter-system', 'filter-status'].forEach(id => {
+    ['filter-system', 'filter-status'].forEach(id => {
       document.getElementById(id).addEventListener('change', e => {
-        if (id === 'filter-subarea') state.area = e.target.value;
-        if (id === 'filter-system') state.system = e.target.value;
-        if (id === 'filter-status') state.status = e.target.value;
+        if (id === 'filter-system') state.filters.system = e.target.value;
+        if (id === 'filter-status') state.filters.status = e.target.value;
+        handleSearch();
       });
     });
   </script>
@@ -1716,12 +1877,39 @@
   <script>
     /* ─── Init ───────────────────────────────────────── */
     (async () => {
-      // 1. 기본 카테고리(ISO) 활성화 보장
-      switchCategory('iso');
-      // 2. 필터 및 통계 로드
-      await Promise.all([loadFilters(), loadStats()]);
-      // 3. 도면 데이터 로드 (switchCategory 안에서도 호출되지만 안전하게 유지)
-      await loadDrawings();
+      // /api/init: filters + stats + 첫 페이지 drawings 한 번에 로드
+      try {
+        showLoading(true);
+        const res = await fetch('/api/init');
+        const init = await res.json();
+
+        if (init.filters) applyFilters(init.filters);
+        if (init.stats)   applyStats(init.stats);
+
+        if (init.drawings && state.category === 'iso') {
+          state.data  = init.drawings.data  || [];
+          state.total = init.drawings.total || 0;
+          document.getElementById('result-count').textContent = state.total.toLocaleString();
+          document.getElementById('stat-filtered').textContent = state.total.toLocaleString();
+          renderTable();
+          renderPagination();
+          updatePageInfo();
+        }
+
+        // nav 활성화 (데이터 로드 없이 UI 상태만 설정)
+        document.querySelectorAll('.nav-item').forEach(el => {
+          el.classList.toggle('active', el.textContent.trim().toLowerCase().includes('iso'));
+        });
+        document.getElementById('current-category-title').textContent = 'ISO DRAWING MASTER LIST';
+        const syncBtn = document.getElementById('btn-sync');
+        if (syncBtn) syncBtn.style.display = 'none';
+      } catch (e) {
+        console.error('Init failed, falling back:', e);
+        await Promise.all([loadFilters(), loadStats()]);
+        switchCategory('iso');
+      } finally {
+        showLoading(false);
+      }
     })();
   </script>
 </body>
