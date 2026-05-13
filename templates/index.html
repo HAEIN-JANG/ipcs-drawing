@@ -1273,7 +1273,7 @@
       data: [],
       total: 0,
       page: 1,
-      perPage: 50,
+      perPage: 20,
       filters: {
         search: '',
         area: '',
@@ -1533,17 +1533,30 @@
         pg.appendChild(b);
       };
 
+      const mkEllipsis = () => {
+        const s = document.createElement('span');
+        s.style.padding = '0 4px';
+        s.style.color = 'var(--text-light)';
+        s.textContent = '…';
+        pg.appendChild(s);
+      };
+
       mkBtn('‹', state.page - 1, false, state.page === 1);
 
       const start = Math.max(1, state.page - 2);
       const end = Math.min(totalPages, state.page + 2);
+      
       if (start > 1) {
         mkBtn(1, 1);
-        if (start > 2) pg.innerHTML += '<span style="padding:0 4px;color:var(--text-light)">…</span>';
+        if (start > 2) mkEllipsis();
       }
-      for (let i = start; i <= end; i++) mkBtn(i, i, i === state.page);
+      
+      for (let i = start; i <= end; i++) {
+        mkBtn(i, i, i === state.page);
+      }
+      
       if (end < totalPages) {
-        pg.innerHTML += '<span style="padding:0 4px;color:var(--text-light)">…</span>';
+        if (end < totalPages - 1) mkEllipsis();
         mkBtn(totalPages, totalPages);
       }
 
