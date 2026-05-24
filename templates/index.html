@@ -571,6 +571,19 @@
     .col-sup-rev { width: 60px; min-width: 60px; }
     .col-sup-date { width: 80px; min-width: 80px; }
 
+    /* Valve Specific Columns */
+    .col-val-no { width: 40px; min-width: 40px; }
+    .col-val-valve { width: 140px; min-width: 120px; }
+    .col-val-size { width: 110px; min-width: 110px; white-space: nowrap; }
+    .col-val-dwg { width: 200px; min-width: 180px; }
+    .col-val-title { width: auto; min-width: 200px; }
+    .col-val-vendor { width: 100px; min-width: 80px; }
+    .col-val-body { width: 80px; min-width: 70px; }
+    .col-val-class { width: 60px; min-width: 60px; }
+    .col-val-conn { width: 80px; min-width: 70px; }
+    .col-val-rev { width: 60px; min-width: 60px; }
+    .col-val-date { width: 100px; min-width: 100px; white-space: nowrap; }
+
     /* PDF & DWG Special Styles */
     .pdf-btn {
       display: inline-flex;
@@ -1112,6 +1125,10 @@
       <option value="">ALL STATUS</option>
     </select>
 
+    <select class="filter-select" id="filter-type" style="display:none">
+      <option value="">ALL TYPE</option>
+    </select>
+
     <button class="btn btn-primary" onclick="handleSearch()">
       <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
         <circle cx="11" cy="11" r="8" />
@@ -1295,9 +1312,11 @@
       state.filters.area = '';
       state.filters.system = '';
       state.filters.status = '';
+      state.filters.type = '';
       document.getElementById('search').value = '';
       document.getElementById('filter-system').value = '';
       document.getElementById('filter-status').value = '';
+      document.getElementById('filter-type').value = '';
 
       // Update UI active state
       document.querySelectorAll('.nav-item').forEach(el => {
@@ -1314,9 +1333,13 @@
       };
       document.getElementById('current-category-title').textContent = titles[cat] || titles.iso;
 
-      // Support 탭에서는 REV. 필터 숨기기 (support_latest는 최신 revision만 표시)
+      // 탭별 필터 표시 제어
       const statusFilter = document.getElementById('filter-status');
       if (statusFilter) statusFilter.style.display = cat === 'support' ? 'none' : '';
+      const typeFilter = document.getElementById('filter-type');
+      if (typeFilter) typeFilter.style.display = (cat === 'support' || cat === 'valve') ? '' : 'none';
+      const systemFilter = document.getElementById('filter-system');
+      if (systemFilter) systemFilter.style.display = cat === 'valve' ? 'none' : '';
 
       // Sync Links 버튼은 Support 탭에서만 표시
       const syncBtn = document.getElementById('btn-sync');
@@ -1329,8 +1352,33 @@
         fetch('/api/support/stats').then(r => r.json()).then(d => {
           document.getElementById('stat-total').textContent = (d.total || 0).toLocaleString();
         }).catch(() => {});
+        fetch('/api/support/filters').then(r => r.json()).then(d => {
+          if (d.types) {
+            const el = document.getElementById('filter-type');
+            el.innerHTML = '<option value="">ALL TYPE</option>' +
+              d.types.map(v => `<option value="${v}">${v}</option>`).join('');
+          }
+        }).catch(() => {});
       } else if (cat === 'iso') {
         loadStats();
+      } else if (cat === 'valve') {
+        document.getElementById('stat-c01').textContent = '—';
+        document.getElementById('stat-c01a').textContent = '—';
+        fetch('/api/valve/stats').then(r => r.json()).then(d => {
+          document.getElementById('stat-total').textContent = (d.total || 0).toLocaleString();
+        }).catch(() => {});
+        fetch('/api/valve/filters').then(r => r.json()).then(d => {
+          if (d.valves) {
+            const el = document.getElementById('filter-type');
+            el.innerHTML = '<option value="">ALL VALVE</option>' +
+              d.valves.map(v => `<option value="${v}">${v}</option>`).join('');
+          }
+          if (d.revisions) {
+            const el = document.getElementById('filter-status');
+            el.innerHTML = '<option value="">ALL REV.</option>' +
+              d.revisions.map(v => `<option value="${v}">${v}</option>`).join('');
+          }
+        }).catch(() => {});
       }
 
       // Visibility
@@ -1342,6 +1390,10 @@
         if (anchorTable) anchorTable.style.display = 'block';
         if (anchorPlace) anchorPlace.style.display = 'none';
         loadSupportDrawings();
+      } else if (cat === 'valve') {
+        if (anchorTable) anchorTable.style.display = 'block';
+        if (anchorPlace) anchorPlace.style.display = 'none';
+        loadValveDrawings();
       } else {
         if (anchorTable) anchorTable.style.display = 'none';
         if (anchorPlace) anchorPlace.style.display = 'block';
@@ -1401,6 +1453,7 @@
       };
       if (data.systems) populate('filter-system', data.systems, 'SYSTEM');
       if (data.statuses) populate('filter-status', data.statuses, 'STATUS');
+      if (data.types) populate('filter-type', data.types, 'TYPE');
     }
 
     async function loadFilters() {
@@ -1521,14 +1574,16 @@
         b.className = 'page-btn' + (active ? ' active' : '');
         b.textContent = label;
         b.disabled = disabled;
-        if (!disabled && !active) b.onclick = () => { 
-          state.page = page; 
+        if (!disabled && !active) b.onclick = () => {
+          state.page = page;
           if (state.category === 'support') {
             loadSupportDrawings();
+          } else if (state.category === 'valve') {
+            loadValveDrawings();
           } else {
             loadDrawings();
           }
-          window.scrollTo(0, 0); 
+          window.scrollTo(0, 0);
         };
         pg.appendChild(b);
       };
@@ -1576,6 +1631,7 @@
         const params = new URLSearchParams({
           search: state.filters.search,
           system: state.filters.system,
+          type: state.filters.type || '',
           page: state.page,
           per_page: state.perPage
         });
@@ -1655,6 +1711,101 @@
             <td class="col-sup-lx">${d.l4 || '—'}</td>
             <td class="col-sup-rev">${d.revision || '—'}</td>
             <td class="col-sup-date">${(d.issued_date || '').substring(2, 10) || '—'}</td>
+          </tr>
+        `;
+      });
+
+      tableHtml += `</tbody></table></div>`;
+      anchor.innerHTML = tableHtml;
+    }
+
+    async function loadValveDrawings() {
+      showLoading(true);
+      try {
+        const params = new URLSearchParams({
+          search: state.filters.search,
+          valve: state.filters.type || '',
+          revision: state.filters.status || '',
+          page: state.page,
+          per_page: state.perPage
+        });
+        const res = await fetch(`/api/valve/drawings?${params}`);
+        const data = await res.json();
+
+        if (state.category !== 'valve') return;
+
+        state.data = data.data || [];
+        state.total = data.total || 0;
+        document.getElementById('result-count').textContent = state.total.toLocaleString();
+        document.getElementById('stat-filtered').textContent = state.total.toLocaleString();
+        renderValveTable();
+        renderPagination();
+        updatePageInfo();
+      } catch (e) {
+        console.error('Valve Load Error:', e);
+        toast('Valve 데이터를 불러오지 못했습니다.');
+      } finally {
+        showLoading(false);
+      }
+    }
+
+    function renderValveTable() {
+      const anchor = document.getElementById('table-anchor');
+      const empty = document.getElementById('empty-state');
+      const offset = (state.page - 1) * state.perPage;
+
+      if (!state.data || !state.data.length) {
+        anchor.innerHTML = '';
+        if (empty) empty.style.display = 'flex';
+        return;
+      }
+      if (empty) empty.style.display = 'none';
+
+      let tableHtml = `
+        <div class="table-container">
+          <table>
+            <thead>
+              <tr>
+                <th class="col-val-no">NO.</th>
+                <th class="col-val-valve">VALVE</th>
+                <th class="col-val-size">SIZE</th>
+                <th class="col-val-dwg">DRAWING NO.</th>
+                <th class="col-val-title">TITLE</th>
+                <th class="col-val-vendor">VENDOR</th>
+                <th class="col-val-body">BODY</th>
+                <th class="col-val-class">CLASS</th>
+                <th class="col-val-conn">CONNECTION</th>
+                <th class="col-val-rev">REV.</th>
+                <th class="col-val-date">DATE</th>
+              </tr>
+            </thead>
+            <tbody>
+      `;
+
+      state.data.forEach((d, idx) => {
+        const dwgNo = d.drawing_no || '—';
+        const dwgLink = d.file_link ?
+          `<a href="${d.file_link}" target="_blank" class="td-dwgno">${dwgNo}</a>` :
+          `<span class="td-dwgno no-link">${dwgNo}</span>`;
+
+        let revC = 'rev-blue';
+        const r = String(d.revision || '').toUpperCase();
+        if (r === 'C01A') revC = 'rev-green';
+        else if (r === 'C01B') revC = 'rev-amber';
+
+        tableHtml += `
+          <tr>
+            <td class="col-val-no">${offset + idx + 1}</td>
+            <td class="col-val-valve">${d.valve || '—'}</td>
+            <td class="col-val-size">${d.size || '—'}</td>
+            <td class="col-val-dwg">${dwgLink}</td>
+            <td class="col-val-title" style="text-align:left !important; padding-left:15px;">${d.title || '—'}</td>
+            <td class="col-val-vendor">${d.vendor || '—'}</td>
+            <td class="col-val-body">${d.body || '—'}</td>
+            <td class="col-val-class">${d.class || '—'}</td>
+            <td class="col-val-conn">${d.connection || '—'}</td>
+            <td class="col-val-rev"><span class="rev-badge ${revC}">${d.revision || '—'}</span></td>
+            <td class="col-val-date">${(d.issued_date || '').substring(0, 10) || '—'}</td>
           </tr>
         `;
       });
@@ -1855,10 +2006,13 @@
       state.filters.area = '';
       state.filters.system = document.getElementById('filter-system').value;
       state.filters.status = document.getElementById('filter-status').value;
+      state.filters.type = document.getElementById('filter-type').value;
       state.page = 1;
       
       if (state.category === 'support') {
         loadSupportDrawings();
+      } else if (state.category === 'valve') {
+        loadValveDrawings();
       } else {
         loadDrawings();
       }
@@ -1875,10 +2029,11 @@
       if (e.key === 'Enter') handleSearch();
     });
 
-    ['filter-system', 'filter-status'].forEach(id => {
+    ['filter-system', 'filter-status', 'filter-type'].forEach(id => {
       document.getElementById(id).addEventListener('change', e => {
         if (id === 'filter-system') state.filters.system = e.target.value;
         if (id === 'filter-status') state.filters.status = e.target.value;
+        if (id === 'filter-type') state.filters.type = e.target.value;
         handleSearch();
       });
     });

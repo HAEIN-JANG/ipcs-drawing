@@ -33,6 +33,7 @@ if all([c_name, c_key, c_secret]):
 TABLE_ALL = "dwg_iso"
 TABLE_LATEST = "dwg_latest"
 TABLE_SUPPORT = "support_master"
+TABLE_VALVE = "valve_master"
 
 def get_cloudinary_url(file_key):
     if not file_key: return None
@@ -197,9 +198,17 @@ def api_support_stats():
 
 @app.route("/api/support/filters")
 def api_support_filters():
+    try:
+        supabase = get_supabase()
+        res = supabase.table("support_latest").select("type").execute()
+        all_types = sorted(set(r["type"] for r in res.data if r.get("type")))
+        types = ["SPECIAL"] + [t for t in all_types if t != "SPECIAL"]
+    except Exception:
+        types = []
     return jsonify({
         "systems": ["AS", "ATM", "CCW", "CD", "DW", "FG", "FGH", "FO", "FW", "GT MISC", "HP", "HW", "IA", "LO", "LP", "N2", "PW", "RW", "SA", "SS", "ST MISC", "SW", "WWT"],
-        "revisions": ["C01", "C01A", "C01B"]
+        "revisions": ["C01", "C01A", "C01B"],
+        "types": types
     })
 
 @app.route("/api/support/drawings")
@@ -207,6 +216,7 @@ def api_support_drawings():
     try:
         search = request.args.get("search", "").strip()
         system = request.args.get("system", "")
+        type_filter = request.args.get("type", "")
         page = int(request.args.get("page", 1))
         per_page = int(request.args.get("per_page", 20))
         offset = (page - 1) * per_page
@@ -214,9 +224,11 @@ def api_support_drawings():
         supabase = get_supabase()
         query = supabase.table("support_latest").select("*", count="exact")
         if search:
-            query = query.or_(f"support_drawing.ilike.%{search}%,line_no.ilike.%{search}%")
+            query = query.or_(f"support_drawing.ilike.%{search}%,line_no.ilike.%{search}%,type.ilike.%{search}%")
         if system:
             query = query.eq("system", system)
+        if type_filter:
+            query = query.eq("type", type_filter)
 
         res = query.order("system").order("support_drawing").range(offset, offset + per_page - 1).execute()
 
@@ -329,6 +341,56 @@ def api_support_sync_links():
                 supabase.table(TABLE_SUPPORT).upsert(updates[i:i+1000]).execute()
 
         return jsonify({"success": True, "synced": len(updates), "message": f"{len(updates)}개 도면 링크 연결 완료"})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route("/api/valve/stats")
+def api_valve_stats():
+    try:
+        supabase = get_supabase()
+        res = supabase.table(TABLE_VALVE).select("id", count="exact").limit(1).execute()
+        return jsonify({"total": res.count or 0})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route("/api/valve/filters")
+def api_valve_filters():
+    try:
+        supabase = get_supabase()
+        res = supabase.table(TABLE_VALVE).select("valve,revision").execute()
+        valves = sorted(set(r["valve"] for r in res.data if r.get("valve")))
+        revisions = sorted(set(r["revision"] for r in res.data if r.get("revision")))
+        return jsonify({"valves": valves, "revisions": revisions})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route("/api/valve/drawings")
+def api_valve_drawings():
+    try:
+        search = request.args.get("search", "").strip()
+        valve = request.args.get("valve", "")
+        revision = request.args.get("revision", "")
+        page = int(request.args.get("page", 1))
+        per_page = int(request.args.get("per_page", 20))
+        offset = (page - 1) * per_page
+
+        supabase = get_supabase()
+        query = supabase.table(TABLE_VALVE).select("*", count="exact")
+        if search:
+            query = query.or_(f"drawing_no.ilike.%{search}%,title.ilike.%{search}%,vendor.ilike.%{search}%,valve.ilike.%{search}%")
+        if valve:
+            query = query.eq("valve", valve)
+        if revision:
+            query = query.eq("revision", revision)
+
+        res = query.order("drawing_no").range(offset, offset + per_page - 1).execute()
+
+        for d in res.data:
+            fk = d.get("file_link", "")
+            if fk and "res.cloudinary.com" not in fk:
+                d["file_link"] = None
+
+        return jsonify({"total": res.count, "data": res.data})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
