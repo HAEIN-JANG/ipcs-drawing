@@ -285,6 +285,63 @@ def api_support_upload():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
+@app.route("/api/valve/upload", methods=["POST"])
+def api_valve_upload():
+    try:
+        file = request.files.get("file")
+        if not file:
+            return jsonify({"error": "No file shared"}), 400
+        df = pd.read_excel(io.BytesIO(file.read()), sheet_name=0)
+        df.columns = [str(c).lower().strip() for c in df.columns]
+        df = df.fillna("")
+        records = df.to_dict("records")
+        supabase = get_supabase()
+
+        batch = []
+        for idx, r in enumerate(records, start=1):
+            dwg_no = str(r.get("drawing no", r.get("drawing_no", ""))).strip()
+            if not dwg_no:
+                continue
+            # class 컬럼: 숫자(150/300/600 등)로 저장된 경우 정수 문자열로 변환
+            raw_class = r.get("class", "")
+            try:
+                class_val = str(int(float(raw_class))) if raw_class != "" else ""
+            except (ValueError, TypeError):
+                class_val = str(raw_class).strip()
+
+            # issued_date: datetime → YYYY-MM-DD 문자열
+            raw_date = r.get("issue date", r.get("issued_date", ""))
+            if hasattr(raw_date, "strftime"):
+                date_val = raw_date.strftime("%Y-%m-%d")
+            else:
+                date_val = str(raw_date).strip() if raw_date else ""
+
+            batch.append({
+                "id":          idx,
+                "drawing_no":  dwg_no,
+                "valve":       str(r.get("type", "")).strip(),
+                "size":        str(r.get("size", "")).strip(),
+                "title":       str(r.get("title", "")).strip(),
+                "vendor":      str(r.get("vendor", "")).strip(),
+                "body":        str(r.get("body", "")).strip(),
+                "class":       class_val,
+                "connection":  str(r.get("connection", "")).strip(),
+                "revision":    str(r.get("revision", "")).strip(),
+                "issued_date": date_val,
+                "file_link":   ""
+            })
+
+        inserted_count = 0
+        if batch:
+            for i in range(0, len(batch), 500):
+                chunk = batch[i:i+500]
+                supabase.table(TABLE_VALVE).upsert(chunk, on_conflict="drawing_no,revision").execute()
+                inserted_count += len(chunk)
+
+        return jsonify({"success": True, "inserted": inserted_count, "processed": len(batch), "skipped": 0, "failed": 0})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
 @app.route("/api/support/sync-links", methods=["POST"])
 def api_support_sync_links():
     try:
@@ -341,6 +398,36 @@ def api_support_sync_links():
                 supabase.table(TABLE_SUPPORT).upsert(updates[i:i+1000]).execute()
 
         return jsonify({"success": True, "synced": len(updates), "message": f"{len(updates)}개 도면 링크 연결 완료"})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route("/api/debug/cld-list")
+def api_debug_cld_list():
+    """Cloudinary 업로드 파일 목록 조회 (디버그용)"""
+    try:
+        import cloudinary.api
+        cld_url = os.environ.get("CLOUDINARY_URL", "")
+        m = re.match(r"cloudinary://([^:]+):([^@]+)@(.+)", cld_url)
+        if not m:
+            return jsonify({"error": "CLOUDINARY_URL 설정 오류"}), 400
+        cloudinary.config(api_key=m.group(1), api_secret=m.group(2), cloud_name=m.group(3))
+
+        all_ids = []
+        next_cursor = None
+        while True:
+            kwargs = {"type": "upload", "max_results": 500, "resource_type": "image"}
+            if next_cursor:
+                kwargs["next_cursor"] = next_cursor
+            res = cloudinary.api.resources(**kwargs)
+            for item in res.get("resources", []):
+                all_ids.append(item["public_id"])
+            next_cursor = res.get("next_cursor")
+            if not next_cursor:
+                break
+
+        # valve 관련 파일만 필터링
+        valve_ids = [x for x in all_ids if "146" in x or "valve" in x.lower() or "VALVE" in x]
+        return jsonify({"total": len(all_ids), "valve_count": len(valve_ids), "valve_files": valve_ids[:50], "all_sample": all_ids[:20]})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
