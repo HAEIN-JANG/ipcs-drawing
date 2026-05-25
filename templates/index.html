@@ -1341,9 +1341,9 @@
       const systemFilter = document.getElementById('filter-system');
       if (systemFilter) systemFilter.style.display = cat === 'valve' ? 'none' : '';
 
-      // Sync Links 버튼은 Support 탭에서만 표시
+      // Sync Links 버튼은 Support 및 Valve 탭에서 표시
       const syncBtn = document.getElementById('btn-sync');
-      if (syncBtn) syncBtn.style.display = cat === 'support' ? '' : 'none';
+      if (syncBtn) syncBtn.style.display = (cat === 'support' || cat === 'valve') ? '' : 'none';
 
       // 탭별 헤더 통계 업데이트
       if (cat === 'support') {
@@ -1828,13 +1828,18 @@
         btn.disabled = true;
         btn.innerHTML = `<i class="fas fa-spinner fa-spin"></i> Syncing...`;
         
-        const res = await fetch('/api/support/sync-links', { method: 'POST' });
+        const endpoint = state.category === 'support' ? '/api/support/sync-links' : '/api/valve/sync-links';
+        const res = await fetch(endpoint, { method: 'POST' });
         const data = await res.json();
         
         if (data.error) throw new Error(data.error);
         
         toast(`✅ ${data.message}`);
-        fetchData(); // Refresh table
+        if (state.category === 'support') {
+          loadSupportDrawings();
+        } else if (state.category === 'valve') {
+          loadValveDrawings();
+        }
       } catch (err) {
         console.error(err);
         toast(`❌ Sync Failed: ${err.message}`);

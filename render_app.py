@@ -401,6 +401,107 @@ def api_support_sync_links():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
+@app.route("/api/valve/sync-links", methods=["POST"])
+def api_valve_sync_links():
+    try:
+        import cloudinary.api
+        cld_url = os.environ.get("CLOUDINARY_URL", "")
+        m = re.match(r"cloudinary://([^:]+):([^@]+)@(.+)", cld_url)
+        if not m:
+            return jsonify({"error": "CLOUDINARY_URL 설정 오류"}), 400
+        cloud_name = m.group(3)
+        cloudinary.config(api_key=m.group(1), api_secret=m.group(2), cloud_name=cloud_name)
+
+        supabase = get_supabase()
+        supabase.table(TABLE_VALVE).update({"file_link": ""}).neq("id", 0).execute()
+
+        master_data = []
+        page_from = 0
+        page_size = 1000
+        while True:
+            res_page = supabase.table(TABLE_VALVE).select("id, drawing_no, revision").range(page_from, page_from + page_size - 1).execute()
+            if not res_page.data:
+                break
+            master_data.extend(res_page.data)
+            if len(res_page.data) < page_size:
+                break
+            page_from += page_size
+
+        uploaded_files = {} # base_name_lower -> secure_url
+        
+        # Image resources
+        next_cursor = None
+        while True:
+            kwargs = {"type": "upload", "max_results": 500, "resource_type": "image"}
+            if next_cursor:
+                kwargs["next_cursor"] = next_cursor
+            res = cloudinary.api.resources(**kwargs)
+            for item in res.get('resources', []):
+                pid = item['public_id']
+                base_pid = pid.split('/')[-1].lower()
+                secure_url = item.get('secure_url')
+                if item.get('format') == 'pdf' and not secure_url.lower().endswith('.pdf'):
+                    secure_url += '.pdf'
+                
+                uploaded_files[base_pid] = secure_url
+                if base_pid.endswith('.pdf'):
+                    uploaded_files[base_pid[:-4]] = secure_url
+            next_cursor = res.get('next_cursor')
+            if not next_cursor:
+                break
+
+        # Raw resources (just in case)
+        next_cursor = None
+        while True:
+            kwargs = {"type": "upload", "max_results": 500, "resource_type": "raw"}
+            if next_cursor:
+                kwargs["next_cursor"] = next_cursor
+            try:
+                res = cloudinary.api.resources(**kwargs)
+                for item in res.get('resources', []):
+                    pid = item['public_id']
+                    base_pid = pid.split('/')[-1].lower()
+                    secure_url = item.get('secure_url')
+                    
+                    uploaded_files[base_pid] = secure_url
+                    if base_pid.endswith('.pdf'):
+                        uploaded_files[base_pid[:-4]] = secure_url
+                next_cursor = res.get('next_cursor')
+            except Exception:
+                break
+            if not next_cursor:
+                break
+
+        updates = []
+        for row in master_data:
+            dwg = row.get("drawing_no")
+            rev = row.get("revision")
+            if not dwg:
+                continue
+            safe_dwg = str(dwg).replace('"', '').replace('/', '_').strip()
+            
+            # Match 1: safe_dwg (new format, drawing number only)
+            filename_dwg = safe_dwg.lower()
+            # Match 2: safe_dwg_revision (old format/fallback)
+            filename_rev = f"{safe_dwg}_{str(rev).upper()}".lower()
+            
+            match_url = None
+            if filename_dwg in uploaded_files:
+                match_url = uploaded_files[filename_dwg]
+            elif filename_rev in uploaded_files:
+                match_url = uploaded_files[filename_rev]
+            
+            if match_url:
+                updates.append({"id": row["id"], "file_link": match_url})
+
+        if updates:
+            for i in range(0, len(updates), 1000):
+                supabase.table(TABLE_VALVE).upsert(updates[i:i+1000]).execute()
+
+        return jsonify({"success": True, "synced": len(updates), "message": f"{len(updates)}개 밸브 도면 링크 연결 완료"})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
 @app.route("/api/debug/cld-list")
 def api_debug_cld_list():
     """Cloudinary 업로드 파일 목록 조회 (디버그용)"""
