@@ -391,4 +391,61 @@ def api_support_sync_links():
             filename = f"{safe_dwg}_{str(rev).upper()}"
             filename_with_ext = f"{filename}.pdf"
             if filename in uploaded_files or filename_with_ext in uploaded_files:
-                updates.append({"id": row["id"], "file_link": f"https://res.cloudin
+                updates.append({"id": row["id"], "file_link": f"https://res.cloudinary.com/{cloud_name}/image/upload/{filename_with_ext}"})
+
+        if updates:
+            for i in range(0, len(updates), 1000):
+                supabase.table(TABLE_SUPPORT).upsert(updates[i:i+1000]).execute()
+
+        return jsonify({"success": True, "synced": len(updates), "message": f"{len(updates)}개 도면 링크 연결 완료"})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route("/api/debug/cld-list")
+def api_debug_cld_list():
+    """Cloudinary 업로드 파일 목록 조회 (디버그용)"""
+    try:
+        import cloudinary.api
+        cld_url = os.environ.get("CLOUDINARY_URL", "")
+        m = re.match(r"cloudinary://([^:]+):([^@]+)@(.+)", cld_url)
+        if not m:
+            return jsonify({"error": "CLOUDINARY_URL 설정 오류"}), 400
+        cloudinary.config(api_key=m.group(1), api_secret=m.group(2), cloud_name=m.group(3))
+
+        all_ids = []
+        next_cursor = None
+        while True:
+            kwargs = {"type": "upload", "max_results": 500, "resource_type": "image"}
+            if next_cursor:
+                kwargs["next_cursor"] = next_cursor
+            res = cloudinary.api.resources(**kwargs)
+            for item in res.get("resources", []):
+                all_ids.append(item["public_id"])
+            next_cursor = res.get("next_cursor")
+            if not next_cursor:
+                break
+
+        # valve 관련 파일만 필터링
+        valve_ids = [x for x in all_ids if "146" in x or "valve" in x.lower() or "VALVE" in x]
+        return jsonify({"total": len(all_ids), "valve_count": len(valve_ids), "valve_files": valve_ids[:50], "all_sample": all_ids[:20]})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route("/api/valve/stats")
+def api_valve_stats():
+    try:
+        supabase = get_supabase()
+        res = supabase.table(TABLE_VALVE).select("id", count="exact").limit(1).execute()
+        return jsonify({"total": res.count or 0})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route("/api/valve/filters")
+def api_valve_filters():
+    try:
+        supabase = get_supabase()
+        res = supabase.table(TABLE_VALVE).select("valve,revision").execute()
+        valves = sorted(set(r["valve"] for r in res.data if r.get("valve")))
+        revisions = sorted(set(r["revision"] for r in res.data if r.get("revision")))
+        return jsonify({"valves": valves, "revisions": revisions})
+    except Excep
