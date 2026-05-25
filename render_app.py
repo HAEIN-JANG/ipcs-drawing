@@ -285,6 +285,63 @@ def api_support_upload():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
+@app.route("/api/valve/upload", methods=["POST"])
+def api_valve_upload():
+    try:
+        file = request.files.get("file")
+        if not file:
+            return jsonify({"error": "No file shared"}), 400
+        df = pd.read_excel(io.BytesIO(file.read()), sheet_name=0)
+        df.columns = [str(c).lower().strip() for c in df.columns]
+        df = df.fillna("")
+        records = df.to_dict("records")
+        supabase = get_supabase()
+
+        batch = []
+        for idx, r in enumerate(records, start=1):
+            dwg_no = str(r.get("drawing no", r.get("drawing_no", ""))).strip()
+            if not dwg_no:
+                continue
+            # class 컬럼: 숫자(150/300/600 등)로 저장된 경우 정수 문자열로 변환
+            raw_class = r.get("class", "")
+            try:
+                class_val = str(int(float(raw_class))) if raw_class != "" else ""
+            except (ValueError, TypeError):
+                class_val = str(raw_class).strip()
+
+            # issued_date: datetime → YYYY-MM-DD 문자열
+            raw_date = r.get("issue date", r.get("issued_date", ""))
+            if hasattr(raw_date, "strftime"):
+                date_val = raw_date.strftime("%Y-%m-%d")
+            else:
+                date_val = str(raw_date).strip() if raw_date else ""
+
+            batch.append({
+                "id":          idx,
+                "drawing_no":  dwg_no,
+                "valve":       str(r.get("type", "")).strip(),
+                "size":        str(r.get("size", "")).strip(),
+                "title":       str(r.get("title", "")).strip(),
+                "vendor":      str(r.get("vendor", "")).strip(),
+                "body":        str(r.get("body", "")).strip(),
+                "class":       class_val,
+                "connection":  str(r.get("connection", "")).strip(),
+                "revision":    str(r.get("revision", "")).strip(),
+                "issued_date": date_val,
+                "file_link":   ""
+            })
+
+        inserted_count = 0
+        if batch:
+            for i in range(0, len(batch), 500):
+                chunk = batch[i:i+500]
+                supabase.table(TABLE_VALVE).upsert(chunk, on_conflict="drawing_no,revision").execute()
+                inserted_count += len(chunk)
+
+        return jsonify({"success": True, "inserted": inserted_count, "processed": len(batch), "skipped": 0, "failed": 0})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
 @app.route("/api/support/sync-links", methods=["POST"])
 def api_support_sync_links():
     try:
@@ -334,65 +391,4 @@ def api_support_sync_links():
             filename = f"{safe_dwg}_{str(rev).upper()}"
             filename_with_ext = f"{filename}.pdf"
             if filename in uploaded_files or filename_with_ext in uploaded_files:
-                updates.append({"id": row["id"], "file_link": f"https://res.cloudinary.com/{cloud_name}/image/upload/{filename_with_ext}"})
-
-        if updates:
-            for i in range(0, len(updates), 1000):
-                supabase.table(TABLE_SUPPORT).upsert(updates[i:i+1000]).execute()
-
-        return jsonify({"success": True, "synced": len(updates), "message": f"{len(updates)}개 도면 링크 연결 완료"})
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-@app.route("/api/valve/stats")
-def api_valve_stats():
-    try:
-        supabase = get_supabase()
-        res = supabase.table(TABLE_VALVE).select("id", count="exact").limit(1).execute()
-        return jsonify({"total": res.count or 0})
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-@app.route("/api/valve/filters")
-def api_valve_filters():
-    try:
-        supabase = get_supabase()
-        res = supabase.table(TABLE_VALVE).select("valve,revision").execute()
-        valves = sorted(set(r["valve"] for r in res.data if r.get("valve")))
-        revisions = sorted(set(r["revision"] for r in res.data if r.get("revision")))
-        return jsonify({"valves": valves, "revisions": revisions})
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-@app.route("/api/valve/drawings")
-def api_valve_drawings():
-    try:
-        search = request.args.get("search", "").strip()
-        valve = request.args.get("valve", "")
-        revision = request.args.get("revision", "")
-        page = int(request.args.get("page", 1))
-        per_page = int(request.args.get("per_page", 20))
-        offset = (page - 1) * per_page
-
-        supabase = get_supabase()
-        query = supabase.table(TABLE_VALVE).select("*", count="exact")
-        if search:
-            query = query.or_(f"drawing_no.ilike.%{search}%,title.ilike.%{search}%,vendor.ilike.%{search}%,valve.ilike.%{search}%")
-        if valve:
-            query = query.eq("valve", valve)
-        if revision:
-            query = query.eq("revision", revision)
-
-        res = query.order("drawing_no").range(offset, offset + per_page - 1).execute()
-
-        for d in res.data:
-            fk = d.get("file_link", "")
-            if fk and "res.cloudinary.com" not in fk:
-                d["file_link"] = None
-
-        return jsonify({"total": res.count, "data": res.data})
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8080)), debug=True)
+                updates.append({"id": row["id"], "file_link": f"https://res.cloudin
