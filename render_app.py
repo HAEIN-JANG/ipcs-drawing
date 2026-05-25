@@ -492,7 +492,12 @@ def api_valve_sync_links():
                 match_url = uploaded_files[filename_rev]
             
             if match_url:
-                updates.append({"id": row["id"], "file_link": match_url})
+                updates.append({
+                    "id": row["id"],
+                    "drawing_no": dwg,
+                    "revision": rev,
+                    "file_link": match_url
+                })
 
         if updates:
             for i in range(0, len(updates), 1000):
