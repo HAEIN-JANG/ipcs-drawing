@@ -478,18 +478,31 @@ def api_valve_sync_links():
             rev = row.get("revision")
             if not dwg:
                 continue
-            safe_dwg = str(dwg).replace('"', '').replace('/', '_').strip()
+            safe_dwg = str(dwg).replace('"', '').replace('/', '_').strip().lower()
+            safe_rev = str(rev).strip().lower() if rev else ""
             
-            # Match 1: safe_dwg (new format, drawing number only)
-            filename_dwg = safe_dwg.lower()
-            # Match 2: safe_dwg_revision (old format/fallback)
-            filename_rev = f"{safe_dwg}_{str(rev).upper()}".lower()
+            keys = []
+            keys.append(safe_dwg)
+            keys.append(f"{safe_dwg}.pdf")
+            
+            if safe_rev:
+                keys.append(f"{safe_dwg}_{safe_rev}")
+                keys.append(f"{safe_dwg}_{safe_rev}.pdf")
+                keys.append(f"{safe_dwg}-{safe_rev}")
+                keys.append(f"{safe_dwg}-{safe_rev}.pdf")
+                
+                if '-' in safe_dwg:
+                    parts = safe_dwg.rsplit('-', 1)
+                    keys.append(f"{parts[0]}-{safe_rev}-{parts[1]}")
+                    keys.append(f"{parts[0]}-{safe_rev}-{parts[1]}.pdf")
+                    keys.append(f"{parts[0]}_{safe_rev}_{parts[1]}")
+                    keys.append(f"{parts[0]}_{safe_rev}_{parts[1]}.pdf")
             
             match_url = None
-            if filename_dwg in uploaded_files:
-                match_url = uploaded_files[filename_dwg]
-            elif filename_rev in uploaded_files:
-                match_url = uploaded_files[filename_rev]
+            for k in keys:
+                if k in uploaded_files:
+                    match_url = uploaded_files[k]
+                    break
             
             if match_url:
                 updates.append({
