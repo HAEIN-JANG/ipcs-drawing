@@ -731,7 +731,7 @@ def api_speciality_sync_links():
         uploaded_files = {}
         next_cursor = None
         while True:
-            kwargs = {"type": "upload", "max_results": 500, "resource_type": "image", "prefix": "Speciality/"}
+            kwargs = {"type": "upload", "max_results": 500, "resource_type": "image"}
             if next_cursor:
                 kwargs["next_cursor"] = next_cursor
             res = cloudinary.api.resources(**kwargs)
