@@ -1335,15 +1335,15 @@
 
       // 탭별 필터 표시 제어
       const statusFilter = document.getElementById('filter-status');
-      if (statusFilter) statusFilter.style.display = cat === 'support' ? 'none' : '';
+      if (statusFilter) statusFilter.style.display = (cat === 'support') ? 'none' : '';
       const typeFilter = document.getElementById('filter-type');
       if (typeFilter) typeFilter.style.display = (cat === 'support' || cat === 'valve') ? '' : 'none';
       const systemFilter = document.getElementById('filter-system');
-      if (systemFilter) systemFilter.style.display = cat === 'valve' ? 'none' : '';
+      if (systemFilter) systemFilter.style.display = (cat === 'valve' || cat === 'speciality') ? 'none' : '';
 
-      // Sync Links 버튼은 Support 및 Valve 탭에서 표시
+      // Sync Links 버튼은 Support, Valve, Speciality 탭에서 표시
       const syncBtn = document.getElementById('btn-sync');
-      if (syncBtn) syncBtn.style.display = (cat === 'support' || cat === 'valve') ? '' : 'none';
+      if (syncBtn) syncBtn.style.display = (cat === 'support' || cat === 'valve' || cat === 'speciality') ? '' : 'none';
 
       // 탭별 헤더 통계 업데이트
       if (cat === 'support') {
@@ -1379,6 +1379,19 @@
               d.revisions.map(v => `<option value="${v}">${v}</option>`).join('');
           }
         }).catch(() => {});
+      } else if (cat === 'speciality') {
+        document.getElementById('stat-c01').textContent = '—';
+        document.getElementById('stat-c01a').textContent = '—';
+        fetch('/api/speciality/stats').then(r => r.json()).then(d => {
+          document.getElementById('stat-total').textContent = (d.total || 0).toLocaleString();
+        }).catch(() => {});
+        fetch('/api/speciality/filters').then(r => r.json()).then(d => {
+          if (d.revisions) {
+            const el = document.getElementById('filter-status');
+            el.innerHTML = '<option value="">ALL REV.</option>' +
+              d.revisions.map(v => `<option value="${v}">${v}</option>`).join('');
+          }
+        }).catch(() => {});
       }
 
       // Visibility
@@ -1394,6 +1407,10 @@
         if (anchorTable) anchorTable.style.display = 'block';
         if (anchorPlace) anchorPlace.style.display = 'none';
         loadValveDrawings();
+      } else if (cat === 'speciality') {
+        if (anchorTable) anchorTable.style.display = 'block';
+        if (anchorPlace) anchorPlace.style.display = 'none';
+        loadSpecialityDrawings();
       } else {
         if (anchorTable) anchorTable.style.display = 'none';
         if (anchorPlace) anchorPlace.style.display = 'block';
@@ -1814,6 +1831,94 @@
       anchor.innerHTML = tableHtml;
     }
 
+    async function loadSpecialityDrawings() {
+      showLoading(true);
+      try {
+        const params = new URLSearchParams({
+          search: state.filters.search,
+          revision: state.filters.status || '',
+          page: state.page,
+          per_page: state.perPage
+        });
+        const res = await fetch(`/api/speciality/drawings?${params}`);
+        const data = await res.json();
+
+        if (state.category !== 'speciality') return;
+
+        state.data = data.data || [];
+        state.total = data.total || 0;
+        document.getElementById('result-count').textContent = state.total.toLocaleString();
+        document.getElementById('stat-filtered').textContent = state.total.toLocaleString();
+        renderSpecialityTable();
+        renderPagination();
+        updatePageInfo();
+      } catch (e) {
+        console.error('Speciality Load Error:', e);
+        toast('Speciality 데이터를 불러오지 못했습니다.');
+      } finally {
+        showLoading(false);
+      }
+    }
+
+    function renderSpecialityTable() {
+      const anchor = document.getElementById('table-anchor');
+      const empty = document.getElementById('empty-state');
+      const offset = (state.page - 1) * state.perPage;
+
+      if (!state.data || !state.data.length) {
+        anchor.innerHTML = '';
+        if (empty) empty.style.display = 'flex';
+        return;
+      }
+      if (empty) empty.style.display = 'none';
+
+      let tableHtml = `
+        <div class="table-container">
+          <table>
+            <thead>
+              <tr>
+                <th class="col-val-no">NO.</th>
+                <th class="col-val-dwg">DRAWING NO.</th>
+                <th class="col-val-title">TITLE</th>
+                <th class="col-val-vendor">VENDOR</th>
+                <th class="col-val-class">CLASS</th>
+                <th class="col-val-conn">CONNECTION</th>
+                <th class="col-val-rev">REV.</th>
+                <th class="col-val-date">DATE</th>
+              </tr>
+            </thead>
+            <tbody>
+      `;
+
+      state.data.forEach((d, idx) => {
+        const dwgNo = d.drawing_no || '—';
+        const dwgLink = d.file_link ?
+          `<a href="${d.file_link}" target="_blank" class="td-dwgno">${dwgNo}</a>` :
+          `<span class="td-dwgno no-link">${dwgNo}</span>`;
+
+        let revC = 'rev-blue';
+        const r = String(d.revision || '').toUpperCase();
+        if (r === 'C01A') revC = 'rev-green';
+        else if (r === 'C01B') revC = 'rev-amber';
+
+        tableHtml += `
+          <tr>
+            <td class="col-val-no">${offset + idx + 1}</td>
+            <td class="col-val-dwg">${dwgLink}</td>
+            <td class="col-val-title" style="text-align:left !important; padding-left:15px;">${d.title || '—'}</td>
+            <td class="col-val-vendor">${d.vendor || '—'}</td>
+            <td class="col-val-class">${d.class || '—'}</td>
+            <td class="col-val-conn">${d.connection || '—'}</td>
+            <td class="col-val-rev"><span class="rev-badge ${revC}">${d.revision || '—'}</span></td>
+            <td class="col-val-date">${(d.issued_date || '').substring(0, 10) || '—'}</td>
+          </tr>
+        `;
+      });
+
+      tableHtml += `</tbody></table></div>`;
+      anchor.innerHTML = tableHtml;
+    }
+
     /* ─── Copy DWG NO ─────────────────────────────────── */
     function copyDwgNo(val) {
       navigator.clipboard.writeText(val).then(() => toast(`Copied: ${val}`));
@@ -1828,17 +1933,21 @@
         btn.disabled = true;
         btn.innerHTML = `<i class="fas fa-spinner fa-spin"></i> Syncing...`;
         
-        const endpoint = state.category === 'support' ? '/api/support/sync-links' : '/api/valve/sync-links';
+        const endpoint = state.category === 'support' ? '/api/support/sync-links'
+                       : state.category === 'speciality' ? '/api/speciality/sync-links'
+                       : '/api/valve/sync-links';
         const res = await fetch(endpoint, { method: 'POST' });
         const data = await res.json();
         
         if (data.error) throw new Error(data.error);
-        
+
         toast(`✅ ${data.message}`);
         if (state.category === 'support') {
           loadSupportDrawings();
         } else if (state.category === 'valve') {
           loadValveDrawings();
+        } else if (state.category === 'speciality') {
+          loadSpecialityDrawings();
         }
       } catch (err) {
         console.error(err);
@@ -1929,8 +2038,9 @@
         const formData = new FormData();
         formData.append('file', selectedFile);
 
-        const uploadUrl = state.category === 'support' ? '/api/support/upload'
-                        : state.category === 'valve'   ? '/api/valve/upload'
+        const uploadUrl = state.category === 'support'    ? '/api/support/upload'
+                        : state.category === 'valve'       ? '/api/valve/upload'
+                        : state.category === 'speciality'  ? '/api/speciality/upload'
                         : '/api/upload';
         const res = await fetch(uploadUrl, { method: 'POST', body: formData });
         const data = await res.json();
@@ -1965,7 +2075,10 @@
       `;
 
           // 통계 & 목록 갱신
-          const loadTask = state.category === 'support' ? loadSupportDrawings() : loadDrawings();
+          const loadTask = state.category === 'support'   ? loadSupportDrawings()
+                         : state.category === 'valve'      ? loadValveDrawings()
+                         : state.category === 'speciality' ? loadSpecialityDrawings()
+                         : loadDrawings();
           await Promise.all([loadStats(), loadTask]);
           if (data.new_total) {
             document.getElementById('stat-total').textContent = data.new_total.toLocaleString();
@@ -2020,6 +2133,8 @@
         loadSupportDrawings();
       } else if (state.category === 'valve') {
         loadValveDrawings();
+      } else if (state.category === 'speciality') {
+        loadSpecialityDrawings();
       } else {
         loadDrawings();
       }
