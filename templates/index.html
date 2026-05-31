@@ -573,21 +573,21 @@
 
     /* Valve Specific Columns */
     .col-val-no { width: 40px; min-width: 40px; }
-    .col-val-valve { width: 140px; min-width: 120px; }
-    .col-val-size { width: 110px; min-width: 110px; white-space: nowrap; }
-    .col-val-dwg { width: 200px; min-width: 180px; }
-    .col-val-title { width: auto; min-width: 200px; }
-    .col-val-vendor { width: 100px; min-width: 80px; }
-    .col-val-body { width: 80px; min-width: 70px; }
-    .col-val-class { width: 60px; min-width: 60px; }
-    .col-val-conn { width: 80px; min-width: 70px; }
-    .col-val-rev { width: 60px; min-width: 60px; }
-    .col-val-date { width: 100px; min-width: 100px; white-space: nowrap; }
+    .col-val-valve { width: 190px; min-width: 170px; }
+    .col-val-size { width: 160px; min-width: 150px; white-space: nowrap; }
+    .col-val-dwg { width: 250px; min-width: 230px; }
+    .col-val-title { width: 350px; min-width: 280px; }
+    .col-val-vendor { width: 150px; min-width: 130px; }
+    .col-val-body { width: 130px; min-width: 110px; }
+    .col-val-class { width: 110px; min-width: 90px; }
+    .col-val-conn { width: 130px; min-width: 110px; }
+    .col-val-rev { width: 110px; min-width: 90px; }
+    .col-val-date { width: 150px; min-width: 130px; white-space: nowrap; }
 
     /* Speciality Specific Columns */
     .col-spc-no     { width: 40px;  min-width: 40px; text-align: center; }
     .col-spc-dwg    { width: 300px; min-width: 260px; }
-    .col-spc-title  { width: 280px; min-width: 220px; text-align: left; padding-left: 15px; }
+    .col-spc-title  { width: 280px; min-width: 220px; }
     .col-spc-vendor { width: 150px; min-width: 120px; }
     .col-spc-class  { width: 120px; min-width: 90px; }
     .col-spc-conn   { width: 200px; min-width: 160px; }
@@ -1737,10 +1737,11 @@
       `;
 
       state.data.forEach((d, idx) => {
-        // Strictly use support_drawing first for this table
-        const dwgNo = d.support_drawing || '—';
-        const dwgLink = d.file_link ? 
-          `<a href="${d.file_link}" target="_blank" class="td-dwgno">${dwgNo}</a>` : 
+        // TYPE 코드가 도면번호 끝에 중복 포함된 경우 제거 (예: 1"-AV-B1-34/571-GB1-G-202(GS-70) → 1"-AV-B1-34/571-GB1-G-202)
+        const rawDwg = d.support_drawing || '—';
+        const dwgNo = rawDwg.replace(/\([^)]+\)\s*$/, '').trim() || '—';
+        const dwgLink = d.file_link ?
+          `<a href="${d.file_link}" target="_blank" class="td-dwgno">${dwgNo}</a>` :
           `<span class="td-dwgno no-link">${dwgNo}</span>`;
 
         tableHtml += `
@@ -1845,7 +1846,7 @@
             <td class="col-val-valve">${d.valve || '—'}</td>
             <td class="col-val-size">${d.size || '—'}</td>
             <td class="col-val-dwg">${dwgLink}</td>
-            <td class="col-val-title" style="text-align:left !important; padding-left:15px;">${d.title || '—'}</td>
+            <td class="col-val-title">${d.title || '—'}</td>
             <td class="col-val-vendor">${d.vendor || '—'}</td>
             <td class="col-val-body">${d.body || '—'}</td>
             <td class="col-val-class">${d.class || '—'}</td>
