@@ -584,6 +584,16 @@
     .col-val-rev { width: 60px; min-width: 60px; }
     .col-val-date { width: 100px; min-width: 100px; white-space: nowrap; }
 
+    /* Speciality Specific Columns */
+    .col-spc-no     { width: 40px;  min-width: 40px; text-align: center; }
+    .col-spc-dwg    { width: 210px; min-width: 190px; }
+    .col-spc-title  { width: 220px; min-width: 160px; text-align: left; padding-left: 15px; }
+    .col-spc-vendor { width: 150px; min-width: 120px; }
+    .col-spc-class  { width: 120px; min-width: 90px; }
+    .col-spc-conn   { width: auto;  min-width: 130px; }
+    .col-spc-rev    { width: 60px;  min-width: 60px; }
+    .col-spc-date   { width: 100px; min-width: 100px; white-space: nowrap; }
+
     /* PDF & DWG Special Styles */
     .pdf-btn {
       display: inline-flex;
@@ -1129,6 +1139,10 @@
       <option value="">ALL TYPE</option>
     </select>
 
+    <select class="filter-select" id="filter-title" style="display:none">
+      <option value="">ALL TITLE</option>
+    </select>
+
     <button class="btn btn-primary" onclick="handleSearch()">
       <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
         <circle cx="11" cy="11" r="8" />
@@ -1313,10 +1327,12 @@
       state.filters.system = '';
       state.filters.status = '';
       state.filters.type = '';
+      state.filters.title = '';
       document.getElementById('search').value = '';
       document.getElementById('filter-system').value = '';
       document.getElementById('filter-status').value = '';
       document.getElementById('filter-type').value = '';
+      document.getElementById('filter-title').value = '';
 
       // Update UI active state
       document.querySelectorAll('.nav-item').forEach(el => {
@@ -1338,8 +1354,16 @@
       if (statusFilter) statusFilter.style.display = (cat === 'support') ? 'none' : '';
       const typeFilter = document.getElementById('filter-type');
       if (typeFilter) typeFilter.style.display = (cat === 'support' || cat === 'valve') ? '' : 'none';
+      const titleFilter = document.getElementById('filter-title');
+      if (titleFilter) titleFilter.style.display = (cat === 'speciality') ? '' : 'none';
       const systemFilter = document.getElementById('filter-system');
       if (systemFilter) systemFilter.style.display = (cat === 'valve' || cat === 'speciality') ? 'none' : '';
+
+      // C01/C01A 통계 박스: Speciality에서는 해당 없으므로 숨김
+      const statC01Box  = document.getElementById('stat-c01')?.closest('.hstat');
+      const statC01aBox = document.getElementById('stat-c01a')?.closest('.hstat');
+      if (statC01Box)  statC01Box.style.display  = (cat === 'speciality') ? 'none' : '';
+      if (statC01aBox) statC01aBox.style.display = (cat === 'speciality') ? 'none' : '';
 
       // Sync Links 버튼은 Support, Valve, Speciality 탭에서 표시
       const syncBtn = document.getElementById('btn-sync');
@@ -1380,8 +1404,6 @@
           }
         }).catch(() => {});
       } else if (cat === 'speciality') {
-        document.getElementById('stat-c01').textContent = '—';
-        document.getElementById('stat-c01a').textContent = '—';
         fetch('/api/speciality/stats').then(r => r.json()).then(d => {
           document.getElementById('stat-total').textContent = (d.total || 0).toLocaleString();
         }).catch(() => {});
@@ -1390,6 +1412,11 @@
             const el = document.getElementById('filter-status');
             el.innerHTML = '<option value="">ALL REV.</option>' +
               d.revisions.map(v => `<option value="${v}">${v}</option>`).join('');
+          }
+          if (d.titles) {
+            const el = document.getElementById('filter-title');
+            el.innerHTML = '<option value="">ALL TITLE</option>' +
+              d.titles.map(v => `<option value="${v}">${v}</option>`).join('');
           }
         }).catch(() => {});
       }
@@ -1837,6 +1864,7 @@
         const params = new URLSearchParams({
           search: state.filters.search,
           revision: state.filters.status || '',
+          title: state.filters.title || '',
           page: state.page,
           per_page: state.perPage
         });
@@ -1877,14 +1905,14 @@
           <table>
             <thead>
               <tr>
-                <th class="col-val-no">NO.</th>
-                <th class="col-val-dwg">DRAWING NO.</th>
-                <th class="col-val-title">TITLE</th>
-                <th class="col-val-vendor">VENDOR</th>
-                <th class="col-val-class">CLASS</th>
-                <th class="col-val-conn">CONNECTION</th>
-                <th class="col-val-rev">REV.</th>
-                <th class="col-val-date">DATE</th>
+                <th class="col-spc-no">NO.</th>
+                <th class="col-spc-dwg">DRAWING NO.</th>
+                <th class="col-spc-title">TITLE</th>
+                <th class="col-spc-vendor">VENDOR</th>
+                <th class="col-spc-class">CLASS</th>
+                <th class="col-spc-conn">CONNECTION</th>
+                <th class="col-spc-rev">REV.</th>
+                <th class="col-spc-date">DATE</th>
               </tr>
             </thead>
             <tbody>
@@ -1903,14 +1931,14 @@
 
         tableHtml += `
           <tr>
-            <td class="col-val-no">${offset + idx + 1}</td>
-            <td class="col-val-dwg">${dwgLink}</td>
-            <td class="col-val-title" style="text-align:left !important; padding-left:15px;">${d.title || '—'}</td>
-            <td class="col-val-vendor">${d.vendor || '—'}</td>
-            <td class="col-val-class">${d.class || '—'}</td>
-            <td class="col-val-conn">${d.connection || '—'}</td>
-            <td class="col-val-rev"><span class="rev-badge ${revC}">${d.revision || '—'}</span></td>
-            <td class="col-val-date">${(d.issued_date || '').substring(0, 10) || '—'}</td>
+            <td class="col-spc-no">${offset + idx + 1}</td>
+            <td class="col-spc-dwg">${dwgLink}</td>
+            <td class="col-spc-title">${d.title || '—'}</td>
+            <td class="col-spc-vendor">${d.vendor || '—'}</td>
+            <td class="col-spc-class">${d.class || '—'}</td>
+            <td class="col-spc-conn">${d.connection || '—'}</td>
+            <td class="col-spc-rev"><span class="rev-badge ${revC}">${d.revision || '—'}</span></td>
+            <td class="col-spc-date">${(d.issued_date || '').substring(0, 10) || '—'}</td>
           </tr>
         `;
       });
@@ -2127,6 +2155,7 @@
       state.filters.system = document.getElementById('filter-system').value;
       state.filters.status = document.getElementById('filter-status').value;
       state.filters.type = document.getElementById('filter-type').value;
+      state.filters.title = document.getElementById('filter-title').value;
       state.page = 1;
       
       if (state.category === 'support') {
@@ -2151,11 +2180,12 @@
       if (e.key === 'Enter') handleSearch();
     });
 
-    ['filter-system', 'filter-status', 'filter-type'].forEach(id => {
+    ['filter-system', 'filter-status', 'filter-type', 'filter-title'].forEach(id => {
       document.getElementById(id).addEventListener('change', e => {
         if (id === 'filter-system') state.filters.system = e.target.value;
         if (id === 'filter-status') state.filters.status = e.target.value;
         if (id === 'filter-type') state.filters.type = e.target.value;
+        if (id === 'filter-title') state.filters.title = e.target.value;
         handleSearch();
       });
     });

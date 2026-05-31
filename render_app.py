@@ -615,11 +615,12 @@ def api_speciality_stats():
 def api_speciality_filters():
     try:
         supabase = get_supabase()
-        res = supabase.table(TABLE_SPECIALITY).select("revision").execute()
+        res = supabase.table(TABLE_SPECIALITY).select("revision,title").execute()
         revisions = sorted(set(r["revision"] for r in res.data if r.get("revision")))
-        return jsonify({"revisions": revisions})
+        titles = sorted(set(r["title"] for r in res.data if r.get("title")))
+        return jsonify({"revisions": revisions, "titles": titles})
     except Exception as e:
-        return jsonify({"revisions": []}), 200
+        return jsonify({"revisions": [], "titles": []}), 200
 
 @app.route("/api/speciality/drawings")
 def api_speciality_drawings():
@@ -630,12 +631,15 @@ def api_speciality_drawings():
         per_page = int(request.args.get("per_page", 20))
         offset = (page - 1) * per_page
 
+        title = request.args.get("title", "")
         supabase = get_supabase()
         query = supabase.table(TABLE_SPECIALITY).select("*", count="exact")
         if search:
             query = query.or_(f"drawing_no.ilike.%{search}%,title.ilike.%{search}%,vendor.ilike.%{search}%")
         if revision:
             query = query.eq("revision", revision)
+        if title:
+            query = query.eq("title", title)
 
         res = query.order("drawing_no").range(offset, offset + per_page - 1).execute()
 
