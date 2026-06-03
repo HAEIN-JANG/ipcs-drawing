@@ -47,6 +47,9 @@ SUPABASE_KEY = os.environ.get("SUPABASE_KEY", "")
 TABLE_ALL = "dwg_iso"
 TABLE_LATEST = "dwg_latest"
 TABLE_SUPPORT = "support_master"
+TABLE_VALVE = "valve_master"
+TABLE_SPECIALITY = "speciality_master"
+TABLE_PID = "pid_master"
 
 # ── Supabase 클라이언트 전역 캐시 (요청마다 재생성 방지) ──
 _supabase_client: Client = None
@@ -74,19 +77,14 @@ def _invalidate_stats_cache():
     _stats_cache_ts = 0
     
 def get_cloudinary_url(file_key):
-    if not file_key: return None
+    if not file_key:
+        return None
     file_key = str(file_key).strip()
-    
-    # Strip incorrect folder prefixes (IPCS_Drawing/.../Large/)
-    prefix_pattern = r"(cloudinary\.com/[^/]+/image/upload/)IPCS_Drawing/[^/]+/Large/"
-    if re.search(prefix_pattern, file_key):
-        file_key = re.sub(prefix_pattern, r"\1", file_key)
-        
     if file_key.startswith("http"):
-        if "cloudinary.com" in file_key and not any(file_key.lower().endswith(ext) for ext in [".pdf", ".jpg", ".jpeg", ".png", ".dwg"]):
+        if "cloudinary.com" in file_key and not any(file_key.lower().endswith(ext) for ext in [".pdf", ".jpg", ".jpeg", ".png"]):
             return file_key + ".pdf"
         return file_key
-    return file_key # Fallback
+    return file_key
 
 @app.route("/")
 def index():
@@ -584,6 +582,249 @@ def print_drawings():
         return html
     except Exception as e:
         return f"Print failed: {str(e)}", 500
+
+@app.route("/api/pid/stats")
+def api_pid_stats():
+    try:
+        supabase = get_client()
+        res = supabase.table(TABLE_PID).select("id", count="exact").limit(1).execute()
+        return jsonify({"total": res.count or 0})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route("/api/pid/filters")
+def api_pid_filters():
+    try:
+        supabase = get_client()
+        res = supabase.table(TABLE_PID).select("system,revision").execute()
+        systems  = sorted(set(r["system"]   for r in res.data if r.get("system")))
+        revisions = sorted(set(r["revision"] for r in res.data if r.get("revision")))
+        return jsonify({"systems": systems, "revisions": revisions})
+    except Exception as e:
+        return jsonify({"systems": [], "revisions": []}), 200
+
+@app.route("/api/pid/drawings")
+def api_pid_drawings():
+    try:
+        search   = request.args.get("search", "").strip()
+        system   = request.args.get("system", "")
+        revision = request.args.get("revision", "")
+        page     = int(request.args.get("page", 1))
+        per_page = int(request.args.get("per_page", 50))
+        offset   = (page - 1) * per_page
+
+        supabase = get_client()
+        query = supabase.table(TABLE_PID).select("*", count="exact")
+        if search:
+            query = query.or_(f"drawing_no.ilike.%{search}%,title.ilike.%{search}%,system.ilike.%{search}%")
+        if system:
+            query = query.eq("system", system)
+        if revision:
+            query = query.eq("revision", revision)
+
+        res = query.order("id").range(offset, offset + per_page - 1).execute()
+
+        for d in res.data:
+            fk = d.get("file_link", "")
+            if fk and "res.cloudinary.com" not in fk:
+                d["file_link"] = None
+
+        return jsonify({"total": res.count, "data": res.data})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route("/api/pid/upload", methods=["POST"])
+def api_pid_upload():
+    try:
+        file = request.files.get("file")
+        if not file:
+            return jsonify({"error": "No file shared"}), 400
+        df = pd.read_excel(io.BytesIO(file.read()), header=1)
+        df.columns = [str(c).strip() for c in df.columns]
+        df = df.fillna("")
+
+        supabase = get_client()
+        batch = []
+        for idx, r in df.iterrows():
+            dwg_no = str(r.get("Drawing No", "")).strip()
+            if not dwg_no or dwg_no == "nan":
+                continue
+            raw_date = r.get("Date", "")
+            if hasattr(raw_date, "strftime"):
+                date_val = raw_date.strftime("%Y-%m-%d")
+            else:
+                date_val = str(raw_date).strip()[:10] if raw_date and str(raw_date) != "nan" else ""
+            batch.append({
+                "id":          int(r.get("No", idx + 1)),
+                "system":      str(r.get("System", "")).strip(),
+                "drawing_no":  dwg_no,
+                "title":       str(r.get("Title", "")).strip(),
+                "revision":    str(r.get("Rev.", "")).strip(),
+                "issued_date": date_val,
+                "file_link":   ""
+            })
+
+        inserted = 0
+        for i in range(0, len(batch), 500):
+            supabase.table(TABLE_PID).upsert(batch[i:i+500], on_conflict="drawing_no").execute()
+            inserted += len(batch[i:i+500])
+
+        return jsonify({"success": True, "processed": len(batch), "inserted": inserted, "skipped": 0, "failed": 0})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route("/api/pid/sync-links", methods=["POST"])
+def api_pid_sync_links():
+    try:
+        import cloudinary.api
+        cld_url = os.environ.get("CLOUDINARY_URL", "")
+        m = re.match(r"cloudinary://([^:]+):([^@]+)@(.+)", cld_url)
+        if not m:
+            return jsonify({"error": "CLOUDINARY_URL 설정 오류"}), 400
+        cloud_name = m.group(3)
+        cloudinary.config(api_key=m.group(1), api_secret=m.group(2), cloud_name=cloud_name)
+
+        supabase = get_client()
+        supabase.table(TABLE_PID).update({"file_link": ""}).neq("id", 0).execute()
+
+        master_data = supabase.table(TABLE_PID).select("id, drawing_no").execute().data
+
+        # Cloudinary 전체 파일 목록에서 PID drawing_no 매칭 (루트 저장)
+        pid_nos = {row["drawing_no"].lower() for row in master_data if row.get("drawing_no")}
+        uploaded_files = {}
+        next_cursor = None
+        while True:
+            kwargs = {"type": "upload", "max_results": 500, "resource_type": "image"}
+            if next_cursor:
+                kwargs["next_cursor"] = next_cursor
+            res = cloudinary.api.resources(**kwargs)
+            for item in res.get("resources", []):
+                base_pid = item["public_id"].split("/")[-1].lower()
+                if base_pid not in pid_nos:
+                    continue
+                secure_url = item.get("secure_url", "")
+                if item.get("format") == "pdf" and not secure_url.lower().endswith(".pdf"):
+                    secure_url += ".pdf"
+                uploaded_files[base_pid] = secure_url
+            next_cursor = res.get("next_cursor")
+            if not next_cursor:
+                break
+
+        updates = []
+        for row in master_data:
+            dwg = row.get("drawing_no")
+            if not dwg:
+                continue
+            safe = dwg.lower().strip()
+            match_url = uploaded_files.get(safe) or uploaded_files.get(safe + ".pdf")
+            if match_url:
+                updates.append({"id": row["id"], "drawing_no": dwg, "file_link": match_url})
+
+        if updates:
+            for i in range(0, len(updates), 500):
+                supabase.table(TABLE_PID).upsert(updates[i:i+500]).execute()
+
+        return jsonify({"success": True, "synced": len(updates), "message": f"{len(updates)}개 PID 도면 링크 연결 완료"})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+# ── Valve Drawing ─────────────────────────────────────────────
+@app.route("/api/valve/stats")
+def api_valve_stats():
+    try:
+        supabase = get_client()
+        res = supabase.table(TABLE_VALVE).select("id", count="exact").limit(1).execute()
+        return jsonify({"total": res.count or 0})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route("/api/valve/filters")
+def api_valve_filters():
+    try:
+        supabase = get_client()
+        res = supabase.table(TABLE_VALVE).select("valve,revision").execute()
+        valves    = sorted(set(r["valve"]    for r in res.data if r.get("valve")))
+        revisions = sorted(set(r["revision"] for r in res.data if r.get("revision")))
+        return jsonify({"valves": valves, "revisions": revisions})
+    except Exception as e:
+        return jsonify({"valves": [], "revisions": []}), 200
+
+@app.route("/api/valve/drawings")
+def api_valve_drawings():
+    try:
+        search   = request.args.get("search", "").strip()
+        valve    = request.args.get("valve", "")
+        revision = request.args.get("revision", "")
+        page     = int(request.args.get("page", 1))
+        per_page = int(request.args.get("per_page", 20))
+        offset   = (page - 1) * per_page
+
+        supabase = get_client()
+        query = supabase.table(TABLE_VALVE).select("*", count="exact")
+        if search:
+            query = query.or_(f"drawing_no.ilike.%{search}%,title.ilike.%{search}%,valve.ilike.%{search}%")
+        if valve:
+            query = query.eq("valve", valve)
+        if revision:
+            query = query.eq("revision", revision)
+
+        res = query.order("id").range(offset, offset + per_page - 1).execute()
+        for d in res.data:
+            fk = d.get("file_link", "")
+            if fk and "res.cloudinary.com" not in fk:
+                d["file_link"] = None
+        return jsonify({"total": res.count, "data": res.data})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+# ── Speciality Drawing ────────────────────────────────────────
+@app.route("/api/speciality/stats")
+def api_speciality_stats():
+    try:
+        supabase = get_client()
+        res = supabase.table(TABLE_SPECIALITY).select("id", count="exact").limit(1).execute()
+        return jsonify({"total": res.count or 0})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route("/api/speciality/filters")
+def api_speciality_filters():
+    try:
+        supabase = get_client()
+        res = supabase.table(TABLE_SPECIALITY).select("revision,title").execute()
+        revisions = sorted(set(r["revision"] for r in res.data if r.get("revision")))
+        titles    = sorted(set(r["title"]    for r in res.data if r.get("title")))
+        return jsonify({"revisions": revisions, "titles": titles})
+    except Exception as e:
+        return jsonify({"revisions": [], "titles": []}), 200
+
+@app.route("/api/speciality/drawings")
+def api_speciality_drawings():
+    try:
+        search   = request.args.get("search", "").strip()
+        revision = request.args.get("revision", "")
+        title    = request.args.get("title", "")
+        page     = int(request.args.get("page", 1))
+        per_page = int(request.args.get("per_page", 20))
+        offset   = (page - 1) * per_page
+
+        supabase = get_client()
+        query = supabase.table(TABLE_SPECIALITY).select("*", count="exact")
+        if search:
+            query = query.or_(f"drawing_no.ilike.%{search}%,title.ilike.%{search}%,vendor.ilike.%{search}%")
+        if revision:
+            query = query.eq("revision", revision)
+        if title:
+            query = query.eq("title", title)
+
+        res = query.order("drawing_no").range(offset, offset + per_page - 1).execute()
+        for d in res.data:
+            fk = d.get("file_link", "")
+            if fk and "res.cloudinary.com" not in fk:
+                d["file_link"] = None
+        return jsonify({"total": res.count, "data": res.data})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5100))

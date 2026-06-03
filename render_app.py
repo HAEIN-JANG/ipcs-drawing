@@ -6,41 +6,80 @@ import re
 from datetime import datetime
 from supabase import create_client, Client, ClientOptions
 import cloudinary
-import cloudinary.uploader
-from werkzeug.utils import secure_filename
 from dotenv import load_dotenv
 
 load_dotenv()
 
 app = Flask(__name__)
 
-def get_secret(key, default=None):
-    return os.environ.get(key, default)
+# ── Supabase 싱글톤 ──────────────────────────────────────────
+_supabase_client: Client = None
 
 def get_supabase() -> Client:
-    url = get_secret("SUPABASE_URL")
-    key = get_secret("SUPABASE_KEY")
+    global _supabase_client
+    if _supabase_client is not None:
+        return _supabase_client
+    url = os.environ.get("SUPABASE_URL")
+    key = os.environ.get("SUPABASE_KEY")
     if not url or not key:
-        raise ValueError("Missing Supabase configuration")
-    options = ClientOptions(schema="drawing")
-    return create_client(url, key, options=options)
+        raise ValueError("SUPABASE_URL / SUPABASE_KEY 환경변수를 확인하세요.")
+    _supabase_client = create_client(url, key, options=ClientOptions(schema="drawing"))
+    return _supabase_client
 
-c_name = get_secret("CLOUDINARY_NAME")
-c_key = get_secret("CLOUDINARY_API_KEY")
-c_secret = get_secret("CLOUDINARY_API_SECRET")
-if all([c_name, c_key, c_secret]):
-    cloudinary.config(cloud_name=c_name, api_key=c_key, api_secret=c_secret, secure=True)
+# ── Cloudinary 초기화 (Named vars 우선, CLOUDINARY_URL 폴백) ─
+def _init_cloudinary():
+    c_name   = os.environ.get("CLOUDINARY_NAME")
+    c_key    = os.environ.get("CLOUDINARY_API_KEY")
+    c_secret = os.environ.get("CLOUDINARY_API_SECRET")
+    if all([c_name, c_key, c_secret]):
+        cloudinary.config(cloud_name=c_name, api_key=c_key, api_secret=c_secret, secure=True)
+        return c_name
+    cld_url = os.environ.get("CLOUDINARY_URL", "")
+    m = re.match(r"cloudinary://([^:]+):([^@]+)@(.+)", cld_url)
+    if not m:
+        raise ValueError("Cloudinary 환경변수(CLOUDINARY_NAME 또는 CLOUDINARY_URL)를 확인하세요.")
+    cloudinary.config(api_key=m.group(1), api_secret=m.group(2), cloud_name=m.group(3), secure=True)
+    return m.group(3)
+
+_init_cloudinary()
 
 TABLE_ALL = "dwg_iso"
 TABLE_LATEST = "dwg_latest"
 TABLE_SUPPORT = "support_master"
 TABLE_VALVE = "valve_master"
 TABLE_SPECIALITY = "speciality_master"
+TABLE_PID = "pid_master"
 
 def get_cloudinary_url(file_key):
-    if not file_key: return None
-    if file_key.startswith("http"): return file_key
+    if not file_key:
+        return None
+    if file_key.startswith("http"):
+        return file_key
+    import cloudinary.utils
     return cloudinary.utils.cloudinary_url(file_key, resource_type="image", secure=True)[0]
+
+def _fetch_cld_by_ids(id_set: set) -> dict:
+    """Cloudinary 전체 이미지 중 id_set과 일치하는 파일만 반환. {lower_basename: secure_url}"""
+    import cloudinary.api
+    result = {}
+    next_cursor = None
+    while True:
+        kwargs = {"type": "upload", "max_results": 500, "resource_type": "image"}
+        if next_cursor:
+            kwargs["next_cursor"] = next_cursor
+        res = cloudinary.api.resources(**kwargs)
+        for item in res.get("resources", []):
+            base = item["public_id"].split("/")[-1].lower()
+            if base not in id_set:
+                continue
+            url = item.get("secure_url", "")
+            if item.get("format") == "pdf" and not url.lower().endswith(".pdf"):
+                url += ".pdf"
+            result[base] = url
+        next_cursor = res.get("next_cursor")
+        if not next_cursor:
+            break
+    return result
 
 @app.route("/")
 def index():
@@ -289,58 +328,43 @@ def api_support_upload():
 
 @app.route("/api/valve/upload", methods=["POST"])
 def api_valve_upload():
+    """Valve List 포맷: 헤더행1 / 컬럼: No, Item, Drawing No, Title, Rev., Date"""
     try:
         file = request.files.get("file")
         if not file:
             return jsonify({"error": "No file shared"}), 400
-        df = pd.read_excel(io.BytesIO(file.read()), sheet_name=0)
-        df.columns = [str(c).lower().strip() for c in df.columns]
+        df = pd.read_excel(io.BytesIO(file.read()), header=1)
+        df.columns = [str(c).strip() for c in df.columns]
         df = df.fillna("")
-        records = df.to_dict("records")
-        supabase = get_supabase()
 
         batch = []
-        for idx, r in enumerate(records, start=1):
-            dwg_no = str(r.get("drawing no", r.get("drawing_no", ""))).strip()
-            if not dwg_no:
+        for idx, r in df.iterrows():
+            dwg_no = str(r.get("Drawing No", "")).strip()
+            if not dwg_no or dwg_no == "nan":
                 continue
-            # class 컬럼: 숫자(150/300/600 등)로 저장된 경우 정수 문자열로 변환
-            raw_class = r.get("class", "")
-            try:
-                class_val = str(int(float(raw_class))) if raw_class != "" else ""
-            except (ValueError, TypeError):
-                class_val = str(raw_class).strip()
-
-            # issued_date: datetime → YYYY-MM-DD 문자열
-            raw_date = r.get("issue date", r.get("issued_date", ""))
+            raw_date = r.get("Date", "")
             if hasattr(raw_date, "strftime"):
                 date_val = raw_date.strftime("%Y-%m-%d")
             else:
-                date_val = str(raw_date).strip() if raw_date else ""
-
+                date_val = str(raw_date).strip()[:10] if raw_date and str(raw_date) != "nan" else ""
             batch.append({
-                "id":          idx,
+                "id":          int(r.get("No", idx + 1)),
                 "drawing_no":  dwg_no,
-                "valve":       str(r.get("type", "")).strip(),
-                "size":        str(r.get("size", "")).strip(),
-                "title":       str(r.get("title", "")).strip(),
-                "vendor":      str(r.get("vendor", "")).strip(),
-                "body":        str(r.get("body", "")).strip(),
-                "class":       class_val,
-                "connection":  str(r.get("connection", "")).strip(),
-                "revision":    str(r.get("revision", "")).strip(),
+                "valve":       str(r.get("Item", "")).strip(),
+                "title":       str(r.get("Title", "")).strip(),
+                "revision":    str(r.get("Rev.", "")).strip(),
                 "issued_date": date_val,
                 "file_link":   ""
             })
 
-        inserted_count = 0
+        supabase = get_supabase()
+        inserted = 0
         if batch:
             for i in range(0, len(batch), 500):
-                chunk = batch[i:i+500]
-                supabase.table(TABLE_VALVE).upsert(chunk, on_conflict="drawing_no,revision").execute()
-                inserted_count += len(chunk)
+                supabase.table(TABLE_VALVE).upsert(batch[i:i+500], on_conflict="drawing_no").execute()
+                inserted += len(batch[i:i+500])
 
-        return jsonify({"success": True, "inserted": inserted_count, "processed": len(batch), "skipped": 0, "failed": 0})
+        return jsonify({"success": True, "inserted": inserted, "processed": len(batch), "skipped": 0, "failed": 0})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
@@ -348,21 +372,14 @@ def api_valve_upload():
 def api_support_sync_links():
     try:
         import cloudinary.api
-        cld_url = os.environ.get("CLOUDINARY_URL", "")
-        m = re.match(r"cloudinary://([^:]+):([^@]+)@(.+)", cld_url)
-        if not m:
-            return jsonify({"error": "CLOUDINARY_URL 설정 오류"}), 400
-        cloud_name = m.group(3)
-        cloudinary.config(api_key=m.group(1), api_secret=m.group(2), cloud_name=cloud_name)
-
+        cloud_name = _init_cloudinary()
         supabase = get_supabase()
         supabase.table(TABLE_SUPPORT).update({"file_link": ""}).neq("id", 0).execute()
 
         master_data = []
-        page_from = 0
-        page_size = 1000
+        page_from, page_size = 0, 1000
         while True:
-            res_page = supabase.table(TABLE_SUPPORT).select("id, support_drawing, revision, system").range(page_from, page_from + page_size - 1).execute()
+            res_page = supabase.table(TABLE_SUPPORT).select("id, support_drawing, revision").range(page_from, page_from + page_size - 1).execute()
             if not res_page.data:
                 break
             master_data.extend(res_page.data)
@@ -377,9 +394,9 @@ def api_support_sync_links():
             if next_cursor:
                 kwargs["next_cursor"] = next_cursor
             res = cloudinary.api.resources(**kwargs)
-            for item in res.get('resources', []):
-                uploaded_files.add(item['public_id'].split('/')[-1])
-            next_cursor = res.get('next_cursor')
+            for item in res.get("resources", []):
+                uploaded_files.add(item["public_id"].split("/")[-1])
+            next_cursor = res.get("next_cursor")
             if not next_cursor:
                 break
 
@@ -389,11 +406,11 @@ def api_support_sync_links():
             rev = row.get("revision")
             if not dwg or not rev:
                 continue
-            safe_dwg = str(dwg).replace('"', '').replace('/', '_')
+            safe_dwg = str(dwg).replace('"', "").replace("/", "_")
             filename = f"{safe_dwg}_{str(rev).upper()}"
-            filename_with_ext = f"{filename}.pdf"
-            if filename in uploaded_files or filename_with_ext in uploaded_files:
-                updates.append({"id": row["id"], "file_link": f"https://res.cloudinary.com/{cloud_name}/image/upload/{filename_with_ext}"})
+            filename_ext = f"{filename}.pdf"
+            if filename in uploaded_files or filename_ext in uploaded_files:
+                updates.append({"id": row["id"], "file_link": f"https://res.cloudinary.com/{cloud_name}/image/upload/{filename_ext}"})
 
         if updates:
             for i in range(0, len(updates), 1000):
@@ -406,149 +423,24 @@ def api_support_sync_links():
 @app.route("/api/valve/sync-links", methods=["POST"])
 def api_valve_sync_links():
     try:
-        import cloudinary.api
-        cld_url = os.environ.get("CLOUDINARY_URL", "")
-        m = re.match(r"cloudinary://([^:]+):([^@]+)@(.+)", cld_url)
-        if not m:
-            return jsonify({"error": "CLOUDINARY_URL 설정 오류"}), 400
-        cloud_name = m.group(3)
-        cloudinary.config(api_key=m.group(1), api_secret=m.group(2), cloud_name=cloud_name)
-
+        _init_cloudinary()
         supabase = get_supabase()
         supabase.table(TABLE_VALVE).update({"file_link": ""}).neq("id", 0).execute()
 
-        master_data = []
-        page_from = 0
-        page_size = 1000
-        while True:
-            res_page = supabase.table(TABLE_VALVE).select("id, drawing_no, revision").range(page_from, page_from + page_size - 1).execute()
-            if not res_page.data:
-                break
-            master_data.extend(res_page.data)
-            if len(res_page.data) < page_size:
-                break
-            page_from += page_size
+        master_data = supabase.table(TABLE_VALVE).select("id, drawing_no").execute().data
+        id_set = {r["drawing_no"].lower() for r in master_data if r.get("drawing_no")}
+        uploaded = _fetch_cld_by_ids(id_set)
 
-        uploaded_files = {} # base_name_lower -> secure_url
-        
-        # Image resources
-        next_cursor = None
-        while True:
-            kwargs = {"type": "upload", "max_results": 500, "resource_type": "image"}
-            if next_cursor:
-                kwargs["next_cursor"] = next_cursor
-            res = cloudinary.api.resources(**kwargs)
-            for item in res.get('resources', []):
-                pid = item['public_id']
-                base_pid = pid.split('/')[-1].lower()
-                secure_url = item.get('secure_url')
-                if item.get('format') == 'pdf' and not secure_url.lower().endswith('.pdf'):
-                    secure_url += '.pdf'
-                
-                uploaded_files[base_pid] = secure_url
-                if base_pid.endswith('.pdf'):
-                    uploaded_files[base_pid[:-4]] = secure_url
-            next_cursor = res.get('next_cursor')
-            if not next_cursor:
-                break
-
-        # Raw resources (just in case)
-        next_cursor = None
-        while True:
-            kwargs = {"type": "upload", "max_results": 500, "resource_type": "raw"}
-            if next_cursor:
-                kwargs["next_cursor"] = next_cursor
-            try:
-                res = cloudinary.api.resources(**kwargs)
-                for item in res.get('resources', []):
-                    pid = item['public_id']
-                    base_pid = pid.split('/')[-1].lower()
-                    secure_url = item.get('secure_url')
-                    
-                    uploaded_files[base_pid] = secure_url
-                    if base_pid.endswith('.pdf'):
-                        uploaded_files[base_pid[:-4]] = secure_url
-                next_cursor = res.get('next_cursor')
-            except Exception:
-                break
-            if not next_cursor:
-                break
-
-        updates = []
-        for row in master_data:
-            dwg = row.get("drawing_no")
-            rev = row.get("revision")
-            if not dwg:
-                continue
-            safe_dwg = str(dwg).replace('"', '').replace('/', '_').strip().lower()
-            safe_rev = str(rev).strip().lower() if rev else ""
-            
-            keys = []
-            keys.append(safe_dwg)
-            keys.append(f"{safe_dwg}.pdf")
-            
-            if safe_rev:
-                keys.append(f"{safe_dwg}_{safe_rev}")
-                keys.append(f"{safe_dwg}_{safe_rev}.pdf")
-                keys.append(f"{safe_dwg}-{safe_rev}")
-                keys.append(f"{safe_dwg}-{safe_rev}.pdf")
-                
-                if '-' in safe_dwg:
-                    parts = safe_dwg.rsplit('-', 1)
-                    keys.append(f"{parts[0]}-{safe_rev}-{parts[1]}")
-                    keys.append(f"{parts[0]}-{safe_rev}-{parts[1]}.pdf")
-                    keys.append(f"{parts[0]}_{safe_rev}_{parts[1]}")
-                    keys.append(f"{parts[0]}_{safe_rev}_{parts[1]}.pdf")
-            
-            match_url = None
-            for k in keys:
-                if k in uploaded_files:
-                    match_url = uploaded_files[k]
-                    break
-            
-            if match_url:
-                updates.append({
-                    "id": row["id"],
-                    "drawing_no": dwg,
-                    "revision": rev,
-                    "file_link": match_url
-                })
-
+        updates = [
+            {"id": r["id"], "drawing_no": r["drawing_no"], "file_link": uploaded[r["drawing_no"].lower()]}
+            for r in master_data
+            if r.get("drawing_no") and r["drawing_no"].lower() in uploaded
+        ]
         if updates:
-            for i in range(0, len(updates), 1000):
-                supabase.table(TABLE_VALVE).upsert(updates[i:i+1000]).execute()
+            for i in range(0, len(updates), 500):
+                supabase.table(TABLE_VALVE).upsert(updates[i:i+500]).execute()
 
         return jsonify({"success": True, "synced": len(updates), "message": f"{len(updates)}개 밸브 도면 링크 연결 완료"})
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-@app.route("/api/debug/cld-list")
-def api_debug_cld_list():
-    """Cloudinary 업로드 파일 목록 조회 (디버그용)"""
-    try:
-        import cloudinary.api
-        cld_url = os.environ.get("CLOUDINARY_URL", "")
-        m = re.match(r"cloudinary://([^:]+):([^@]+)@(.+)", cld_url)
-        if not m:
-            return jsonify({"error": "CLOUDINARY_URL 설정 오류"}), 400
-        cloudinary.config(api_key=m.group(1), api_secret=m.group(2), cloud_name=m.group(3))
-
-        all_ids = []
-        next_cursor = None
-        while True:
-            kwargs = {"type": "upload", "max_results": 500, "resource_type": "image"}
-            if next_cursor:
-                kwargs["next_cursor"] = next_cursor
-            res = cloudinary.api.resources(**kwargs)
-            for item in res.get("resources", []):
-                all_ids.append(item["public_id"])
-            next_cursor = res.get("next_cursor")
-            if not next_cursor:
-                break
-
-        # valve 관련 파일만 필터링
-        valve_ids = [x for x in all_ids if "146" in x or "valve" in x.lower() or "VALVE" in x]
-        return jsonify({"total": len(all_ids), "valve_count": len(valve_ids), "valve_files": valve_ids[:50], "all_sample": all_ids[:20]})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
@@ -709,20 +601,12 @@ def api_speciality_upload():
 @app.route("/api/speciality/sync-links", methods=["POST"])
 def api_speciality_sync_links():
     try:
-        import cloudinary.api
-        cld_url = os.environ.get("CLOUDINARY_URL", "")
-        m = re.match(r"cloudinary://([^:]+):([^@]+)@(.+)", cld_url)
-        if not m:
-            return jsonify({"error": "CLOUDINARY_URL 설정 오류"}), 400
-        cloud_name = m.group(3)
-        cloudinary.config(api_key=m.group(1), api_secret=m.group(2), cloud_name=cloud_name)
-
+        _init_cloudinary()
         supabase = get_supabase()
         supabase.table(TABLE_SPECIALITY).update({"file_link": ""}).neq("id", 0).execute()
 
         master_data = []
-        page_from = 0
-        page_size = 1000
+        page_from, page_size = 0, 1000
         while True:
             res_page = supabase.table(TABLE_SPECIALITY).select("id, drawing_no, revision").range(page_from, page_from + page_size - 1).execute()
             if not res_page.data:
@@ -732,25 +616,8 @@ def api_speciality_sync_links():
                 break
             page_from += page_size
 
-        uploaded_files = {}
-        next_cursor = None
-        while True:
-            kwargs = {"type": "upload", "max_results": 500, "resource_type": "image"}
-            if next_cursor:
-                kwargs["next_cursor"] = next_cursor
-            res = cloudinary.api.resources(**kwargs)
-            for item in res.get("resources", []):
-                pid = item["public_id"]
-                base_pid = pid.split("/")[-1].lower()
-                secure_url = item.get("secure_url", "")
-                if item.get("format") == "pdf" and not secure_url.lower().endswith(".pdf"):
-                    secure_url += ".pdf"
-                uploaded_files[base_pid] = secure_url
-                if base_pid.endswith(".pdf"):
-                    uploaded_files[base_pid[:-4]] = secure_url
-            next_cursor = res.get("next_cursor")
-            if not next_cursor:
-                break
+        id_set = {r["drawing_no"].lower() for r in master_data if r.get("drawing_no")}
+        uploaded = _fetch_cld_by_ids(id_set)
 
         updates = []
         for row in master_data:
@@ -758,16 +625,14 @@ def api_speciality_sync_links():
             rev = row.get("revision")
             if not dwg:
                 continue
-            safe_dwg = str(dwg).lower().strip()
-            safe_rev = str(rev).lower().strip() if rev else ""
-
-            keys = [safe_dwg, f"{safe_dwg}.pdf"]
-            if safe_rev:
-                keys += [f"{safe_dwg}_{safe_rev}", f"{safe_dwg}_{safe_rev}.pdf"]
-
-            match_url = next((uploaded_files[k] for k in keys if k in uploaded_files), None)
-            if match_url:
-                updates.append({"id": row["id"], "drawing_no": dwg, "revision": rev, "file_link": match_url})
+            safe = dwg.lower()
+            safe_rev = rev.lower() if rev else ""
+            url = (uploaded.get(safe)
+                   or uploaded.get(f"{safe}.pdf")
+                   or (uploaded.get(f"{safe}_{safe_rev}") if safe_rev else None)
+                   or (uploaded.get(f"{safe}_{safe_rev}.pdf") if safe_rev else None))
+            if url:
+                updates.append({"id": row["id"], "drawing_no": dwg, "revision": rev, "file_link": url})
 
         if updates:
             for i in range(0, len(updates), 1000):
@@ -777,6 +642,120 @@ def api_speciality_sync_links():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
+
+@app.route("/api/pid/stats")
+def api_pid_stats():
+    try:
+        supabase = get_supabase()
+        res = supabase.table(TABLE_PID).select("id", count="exact").limit(1).execute()
+        return jsonify({"total": res.count or 0})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route("/api/pid/filters")
+def api_pid_filters():
+    try:
+        supabase = get_supabase()
+        res = supabase.table(TABLE_PID).select("system,revision").execute()
+        systems   = sorted(set(r["system"]   for r in res.data if r.get("system")))
+        revisions = sorted(set(r["revision"] for r in res.data if r.get("revision")))
+        return jsonify({"systems": systems, "revisions": revisions})
+    except Exception as e:
+        return jsonify({"systems": [], "revisions": []}), 200
+
+@app.route("/api/pid/drawings")
+def api_pid_drawings():
+    try:
+        search   = request.args.get("search", "").strip()
+        system   = request.args.get("system", "")
+        revision = request.args.get("revision", "")
+        page     = int(request.args.get("page", 1))
+        per_page = int(request.args.get("per_page", 50))
+        offset   = (page - 1) * per_page
+
+        supabase = get_supabase()
+        query = supabase.table(TABLE_PID).select("*", count="exact")
+        if search:
+            query = query.or_(f"drawing_no.ilike.%{search}%,title.ilike.%{search}%,system.ilike.%{search}%")
+        if system:
+            query = query.eq("system", system)
+        if revision:
+            query = query.eq("revision", revision)
+
+        res = query.order("id").range(offset, offset + per_page - 1).execute()
+
+        for d in res.data:
+            fk = d.get("file_link", "")
+            if fk and "res.cloudinary.com" not in fk:
+                d["file_link"] = None
+
+        return jsonify({"total": res.count, "data": res.data})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route("/api/pid/upload", methods=["POST"])
+def api_pid_upload():
+    try:
+        file = request.files.get("file")
+        if not file:
+            return jsonify({"error": "No file shared"}), 400
+        df = pd.read_excel(io.BytesIO(file.read()), header=1)
+        df.columns = [str(c).strip() for c in df.columns]
+        df = df.fillna("")
+
+        supabase = get_supabase()
+        batch = []
+        for idx, r in df.iterrows():
+            dwg_no = str(r.get("Drawing No", "")).strip()
+            if not dwg_no or dwg_no == "nan":
+                continue
+            raw_date = r.get("Date", "")
+            if hasattr(raw_date, "strftime"):
+                date_val = raw_date.strftime("%Y-%m-%d")
+            else:
+                date_val = str(raw_date).strip()[:10] if raw_date and str(raw_date) != "nan" else ""
+            batch.append({
+                "id":          int(r.get("No", idx + 1)),
+                "system":      str(r.get("System", "")).strip(),
+                "drawing_no":  dwg_no,
+                "title":       str(r.get("Title", "")).strip(),
+                "revision":    str(r.get("Rev.", "")).strip(),
+                "issued_date": date_val,
+                "file_link":   ""
+            })
+
+        inserted = 0
+        for i in range(0, len(batch), 500):
+            supabase.table(TABLE_PID).upsert(batch[i:i+500], on_conflict="drawing_no").execute()
+            inserted += len(batch[i:i+500])
+
+        return jsonify({"success": True, "processed": len(batch), "inserted": inserted, "skipped": 0, "failed": 0})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route("/api/pid/sync-links", methods=["POST"])
+def api_pid_sync_links():
+    try:
+        _init_cloudinary()
+        supabase = get_supabase()
+        supabase.table(TABLE_PID).update({"file_link": ""}).neq("id", 0).execute()
+
+        master_data = supabase.table(TABLE_PID).select("id, drawing_no").execute().data
+        id_set = {r["drawing_no"].lower() for r in master_data if r.get("drawing_no")}
+        uploaded = _fetch_cld_by_ids(id_set)
+
+        updates = [
+            {"id": r["id"], "drawing_no": r["drawing_no"], "file_link": uploaded[r["drawing_no"].lower()]}
+            for r in master_data
+            if r.get("drawing_no") and r["drawing_no"].lower() in uploaded
+        ]
+        if updates:
+            for i in range(0, len(updates), 500):
+                supabase.table(TABLE_PID).upsert(updates[i:i+500]).execute()
+
+        return jsonify({"success": True, "synced": len(updates), "message": f"{len(updates)}개 PID 도면 링크 연결 완료"})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8080)), debug=True,

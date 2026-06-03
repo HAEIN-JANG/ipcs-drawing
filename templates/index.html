@@ -484,7 +484,7 @@
       width: 100%;
       border-collapse: separate;
       border-spacing: 0;
-      font-size: 12px;
+      font-size: 13px;
     }
 
     thead {
@@ -498,7 +498,7 @@
       box-shadow: inset 0 -1px 0 var(--border);
       padding: 9px 10px;
       text-align: center;
-      font-size: 10px;
+      font-size: 11px;
       font-weight: 600;
       letter-spacing: .5px;
       text-transform: uppercase;
@@ -548,6 +548,7 @@
     .col-title {
       width: auto;
       min-width: 300px;
+      text-align: center;
     }
 
     .col-rev {
@@ -571,19 +572,6 @@
     .col-sup-rev { width: 60px; min-width: 60px; }
     .col-sup-date { width: 80px; min-width: 80px; }
 
-    /* Valve Specific Columns */
-    .col-val-no { width: 40px; min-width: 40px; }
-    .col-val-valve { width: 190px; min-width: 170px; }
-    .col-val-size { width: 160px; min-width: 150px; white-space: nowrap; }
-    .col-val-dwg { width: 250px; min-width: 230px; }
-    .col-val-title { width: 350px; min-width: 280px; }
-    .col-val-vendor { width: 150px; min-width: 130px; }
-    .col-val-body { width: 130px; min-width: 110px; }
-    .col-val-class { width: 110px; min-width: 90px; }
-    .col-val-conn { width: 130px; min-width: 110px; }
-    .col-val-rev { width: 110px; min-width: 90px; }
-    .col-val-date { width: 150px; min-width: 130px; white-space: nowrap; }
-
     /* Speciality Specific Columns */
     .col-spc-no     { width: 40px;  min-width: 40px; text-align: center; }
     .col-spc-dwg    { width: 300px; min-width: 260px; }
@@ -593,6 +581,13 @@
     .col-spc-conn   { width: 200px; min-width: 160px; }
     .col-spc-rev    { width: 65px;  min-width: 65px; }
     .col-spc-date   { width: 110px; min-width: 100px; white-space: nowrap; }
+
+    /* PID Specific Columns */
+    .col-pid-no   { width: 66px;  min-width: 66px;  text-align: center; }
+    .col-pid-sys  { width: 330px; min-width: 280px; text-align: center; }
+    .col-pid-dwg  { width: 500px; min-width: 420px; }
+    .col-pid-rev  { width: 172px; min-width: 150px; text-align: center; }
+    .col-pid-date { width: 200px; min-width: 180px; text-align: center; white-space: nowrap; }
 
     /* PDF & DWG Special Styles */
     .pdf-btn {
@@ -1046,6 +1041,12 @@
       </div>
       <div class="sidebar-nav">
         <div class="nav-label">MONITORING</div>
+        <div class="nav-item" onclick="switchCategory('pid')">
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/>
+          </svg>
+          PID Drawing
+        </div>
         <div class="nav-item active" onclick="switchCategory('iso')">
           <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
@@ -1347,7 +1348,8 @@
         iso: 'ISO DRAWING MASTER LIST',
         support: 'SUPPORT DRAWING MASTER LIST',
         valve: 'VALVE DRAWING MASTER LIST',
-        speciality: 'SPECIALITY DRAWING MASTER LIST'
+        speciality: 'SPECIALITY DRAWING MASTER LIST',
+        pid: 'P&ID DRAWING MASTER LIST'
       };
       document.getElementById('current-category-title').textContent = titles[cat] || titles.iso;
 
@@ -1361,15 +1363,15 @@
       const systemFilter = document.getElementById('filter-system');
       if (systemFilter) systemFilter.style.display = (cat === 'valve' || cat === 'speciality') ? 'none' : '';
 
-      // C01/C01A 통계 박스: Speciality에서는 해당 없으므로 숨김
+      // C01/C01A 통계 박스: Speciality/PID에서는 해당 없으므로 숨김
       const statC01Box  = document.getElementById('stat-c01')?.closest('.hstat');
       const statC01aBox = document.getElementById('stat-c01a')?.closest('.hstat');
-      if (statC01Box)  statC01Box.style.display  = (cat === 'speciality') ? 'none' : '';
-      if (statC01aBox) statC01aBox.style.display = (cat === 'speciality') ? 'none' : '';
+      if (statC01Box)  statC01Box.style.display  = (cat === 'speciality' || cat === 'pid') ? 'none' : '';
+      if (statC01aBox) statC01aBox.style.display = (cat === 'speciality' || cat === 'pid') ? 'none' : '';
 
-      // Sync Links 버튼은 Support, Valve, Speciality 탭에서 표시
+      // Sync Links 버튼은 Support, Valve, Speciality, PID 탭에서 표시
       const syncBtn = document.getElementById('btn-sync');
-      if (syncBtn) syncBtn.style.display = (cat === 'support' || cat === 'valve' || cat === 'speciality') ? '' : 'none';
+      if (syncBtn) syncBtn.style.display = (cat === 'support' || cat === 'valve' || cat === 'speciality' || cat === 'pid') ? '' : 'none';
 
       // 탭별 헤더 통계 업데이트
       if (cat === 'support') {
@@ -1387,6 +1389,18 @@
         }).catch(() => {});
       } else if (cat === 'iso') {
         loadStats();
+        fetch('/api/filters').then(r => r.json()).then(d => {
+          if (d.systems) {
+            const el = document.getElementById('filter-system');
+            el.innerHTML = '<option value="">ALL SYSTEM</option>' +
+              d.systems.map(v => `<option value="${v}">${v}</option>`).join('');
+          }
+          if (d.statuses) {
+            const el = document.getElementById('filter-status');
+            el.innerHTML = '<option value="">ALL STATUS</option>' +
+              d.statuses.map(v => `<option value="${v}">${v}</option>`).join('');
+          }
+        }).catch(() => {});
       } else if (cat === 'valve') {
         document.getElementById('stat-c01').textContent = '—';
         document.getElementById('stat-c01a').textContent = '—';
@@ -1421,6 +1435,22 @@
               d.titles.map(v => `<option value="${v}">${v}</option>`).join('');
           }
         }).catch(() => {});
+      } else if (cat === 'pid') {
+        fetch('/api/pid/stats').then(r => r.json()).then(d => {
+          document.getElementById('stat-total').textContent = (d.total || 0).toLocaleString();
+        }).catch(() => {});
+        fetch('/api/pid/filters').then(r => r.json()).then(d => {
+          if (d.systems) {
+            const el = document.getElementById('filter-system');
+            el.innerHTML = '<option value="">ALL SYSTEM</option>' +
+              d.systems.map(v => `<option value="${v}">${v}</option>`).join('');
+          }
+          if (d.revisions) {
+            const el = document.getElementById('filter-status');
+            el.innerHTML = '<option value="">ALL REV.</option>' +
+              d.revisions.map(v => `<option value="${v}">${v}</option>`).join('');
+          }
+        }).catch(() => {});
       }
 
       // Visibility
@@ -1440,6 +1470,10 @@
         if (anchorTable) anchorTable.style.display = 'block';
         if (anchorPlace) anchorPlace.style.display = 'none';
         loadSpecialityDrawings();
+      } else if (cat === 'pid') {
+        if (anchorTable) anchorTable.style.display = 'block';
+        if (anchorPlace) anchorPlace.style.display = 'none';
+        loadPidDrawings();
       } else {
         if (anchorTable) anchorTable.style.display = 'none';
         if (anchorPlace) anchorPlace.style.display = 'block';
@@ -1597,7 +1631,7 @@
         <td class="col-sys">${d.system || '—'}</td>
         <td class="col-dwg">${dwgNoHtml}</td>
         <td class="col-line">${d.line_no || '—'}</td>
-        <td class="col-title" style="text-align: left !important; padding-left: 15px;">${d.title || '—'}</td>
+        <td class="col-title">${d.title || '—'}</td>
         <td class="col-rev"><span class="rev-badge ${revC}">${d.revision || '—'}</span></td>
         <td class="col-date">${(d.issued_date || '').substring(2, 10) || '—'}</td>
       </tr>
@@ -1810,20 +1844,15 @@
 
       let tableHtml = `
         <div class="table-container">
-          <table>
+          <table class="pid-table">
             <thead>
               <tr>
-                <th class="col-val-no">NO.</th>
-                <th class="col-val-valve">VALVE</th>
-                <th class="col-val-size">SIZE</th>
-                <th class="col-val-dwg">DRAWING NO.</th>
-                <th class="col-val-title">TITLE</th>
-                <th class="col-val-vendor">VENDOR</th>
-                <th class="col-val-body">BODY</th>
-                <th class="col-val-class">CLASS</th>
-                <th class="col-val-conn">CONNECTION</th>
-                <th class="col-val-rev">REV.</th>
-                <th class="col-val-date">DATE</th>
+                <th class="col-pid-no">NO.</th>
+                <th class="col-pid-sys">ITEM</th>
+                <th class="col-pid-dwg">DRAWING NO.</th>
+                <th style="text-align:center;">TITLE</th>
+                <th class="col-pid-rev">REV.</th>
+                <th class="col-pid-date">DATE</th>
               </tr>
             </thead>
             <tbody>
@@ -1835,24 +1864,17 @@
           `<a href="${d.file_link}" target="_blank" class="td-dwgno">${dwgNo}</a>` :
           `<span class="td-dwgno no-link">${dwgNo}</span>`;
 
-        let revC = 'rev-blue';
         const r = String(d.revision || '').toUpperCase();
-        if (r === 'C01A') revC = 'rev-green';
-        else if (r === 'C01B') revC = 'rev-amber';
+        const revC = r === 'C01A' ? 'rev-green' : r === 'C01B' ? 'rev-amber' : 'rev-blue';
 
         tableHtml += `
           <tr>
-            <td class="col-val-no">${offset + idx + 1}</td>
-            <td class="col-val-valve">${d.valve || '—'}</td>
-            <td class="col-val-size">${d.size || '—'}</td>
-            <td class="col-val-dwg">${dwgLink}</td>
-            <td class="col-val-title">${d.title || '—'}</td>
-            <td class="col-val-vendor">${d.vendor || '—'}</td>
-            <td class="col-val-body">${d.body || '—'}</td>
-            <td class="col-val-class">${d.class || '—'}</td>
-            <td class="col-val-conn">${d.connection || '—'}</td>
-            <td class="col-val-rev"><span class="rev-badge ${revC}">${d.revision || '—'}</span></td>
-            <td class="col-val-date">${(d.issued_date || '').substring(0, 10) || '—'}</td>
+            <td class="col-pid-no">${offset + idx + 1}</td>
+            <td class="col-pid-sys">${d.valve || '—'}</td>
+            <td class="col-pid-dwg">${dwgLink}</td>
+            <td style="text-align:center;">${d.title || '—'}</td>
+            <td class="col-pid-rev"><span class="rev-badge ${revC}">${d.revision || '—'}</span></td>
+            <td class="col-pid-date">${(d.issued_date || '').substring(0, 10) || '—'}</td>
           </tr>
         `;
       });
@@ -1950,6 +1972,88 @@
       anchor.innerHTML = tableHtml;
     }
 
+    async function loadPidDrawings() {
+      showLoading(true);
+      try {
+        const params = new URLSearchParams({
+          search:   state.filters.search,
+          system:   state.filters.system || '',
+          revision: state.filters.status || '',
+          page:     state.page,
+          per_page: state.perPage
+        });
+        const res = await fetch(`/api/pid/drawings?${params}`);
+        const data = await res.json();
+        if (state.category !== 'pid') return;
+        state.data  = data.data  || [];
+        state.total = data.total || 0;
+        document.getElementById('result-count').textContent = state.total.toLocaleString();
+        document.getElementById('stat-filtered').textContent = state.total.toLocaleString();
+        renderPidTable();
+        renderPagination();
+        updatePageInfo();
+      } catch (e) {
+        console.error('PID Load Error:', e);
+        toast('PID 데이터를 불러오지 못했습니다.');
+      } finally {
+        showLoading(false);
+      }
+    }
+
+    function renderPidTable() {
+      const anchor = document.getElementById('table-anchor');
+      const empty  = document.getElementById('empty-state');
+      const offset = (state.page - 1) * state.perPage;
+
+      if (!state.data || !state.data.length) {
+        anchor.innerHTML = '';
+        if (empty) empty.style.display = 'flex';
+        return;
+      }
+      if (empty) empty.style.display = 'none';
+
+      let tableHtml = `
+        <div class="table-container">
+          <table class="pid-table">
+            <thead>
+              <tr>
+                <th class="col-pid-no">NO.</th>
+                <th class="col-pid-sys">SYSTEM</th>
+                <th class="col-pid-dwg">DRAWING NO.</th>
+                <th style="text-align:center;">TITLE</th>
+                <th class="col-pid-rev">REV.</th>
+                <th class="col-pid-date">DATE</th>
+              </tr>
+            </thead>
+            <tbody>
+      `;
+
+      state.data.forEach((d, idx) => {
+        const dwgNo  = d.drawing_no || '—';
+        const dwgLink = d.file_link
+          ? `<a href="${d.file_link}" target="_blank" class="td-dwgno">${dwgNo}</a>`
+          : `<span class="td-dwgno no-link">${dwgNo}</span>`;
+
+        const r = String(d.revision || '').toUpperCase();
+        const revC = r === 'C01A' ? 'rev-green' : r === 'C01B' ? 'rev-amber' : 'rev-blue';
+        const sysVal = d.system || '—';
+
+        tableHtml += `
+          <tr>
+            <td class="col-pid-no">${offset + idx + 1}</td>
+            <td class="col-pid-sys">${sysVal}</td>
+            <td class="col-pid-dwg">${dwgLink}</td>
+            <td style="text-align:center;">${d.title || '—'}</td>
+            <td class="col-pid-rev"><span class="rev-badge ${revC}">${d.revision || '—'}</span></td>
+            <td class="col-pid-date">${(d.issued_date || '').substring(0, 10) || '—'}</td>
+          </tr>
+        `;
+      });
+
+      tableHtml += `</tbody></table></div>`;
+      anchor.innerHTML = tableHtml;
+    }
+
     /* ─── Copy DWG NO ─────────────────────────────────── */
     function copyDwgNo(val) {
       navigator.clipboard.writeText(val).then(() => toast(`Copied: ${val}`));
@@ -1964,8 +2068,9 @@
         btn.disabled = true;
         btn.innerHTML = `<i class="fas fa-spinner fa-spin"></i> Syncing...`;
         
-        const endpoint = state.category === 'support' ? '/api/support/sync-links'
+        const endpoint = state.category === 'support'    ? '/api/support/sync-links'
                        : state.category === 'speciality' ? '/api/speciality/sync-links'
+                       : state.category === 'pid'        ? '/api/pid/sync-links'
                        : '/api/valve/sync-links';
         const res = await fetch(endpoint, { method: 'POST' });
         const data = await res.json();
@@ -1979,6 +2084,8 @@
           loadValveDrawings();
         } else if (state.category === 'speciality') {
           loadSpecialityDrawings();
+        } else if (state.category === 'pid') {
+          loadPidDrawings();
         }
       } catch (err) {
         console.error(err);
@@ -2072,6 +2179,7 @@
         const uploadUrl = state.category === 'support'    ? '/api/support/upload'
                         : state.category === 'valve'       ? '/api/valve/upload'
                         : state.category === 'speciality'  ? '/api/speciality/upload'
+                        : state.category === 'pid'         ? '/api/pid/upload'
                         : '/api/upload';
         const res = await fetch(uploadUrl, { method: 'POST', body: formData });
         const data = await res.json();
@@ -2106,9 +2214,10 @@
       `;
 
           // 통계 & 목록 갱신
-          const loadTask = state.category === 'support'   ? loadSupportDrawings()
-                         : state.category === 'valve'      ? loadValveDrawings()
-                         : state.category === 'speciality' ? loadSpecialityDrawings()
+          const loadTask = state.category === 'support'    ? loadSupportDrawings()
+                         : state.category === 'valve'       ? loadValveDrawings()
+                         : state.category === 'speciality'  ? loadSpecialityDrawings()
+                         : state.category === 'pid'         ? loadPidDrawings()
                          : loadDrawings();
           await Promise.all([loadStats(), loadTask]);
           if (data.new_total) {
@@ -2167,6 +2276,8 @@
         loadValveDrawings();
       } else if (state.category === 'speciality') {
         loadSpecialityDrawings();
+      } else if (state.category === 'pid') {
+        loadPidDrawings();
       } else {
         loadDrawings();
       }
