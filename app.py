@@ -299,7 +299,6 @@ def upload_excel():
         _invalidate_stats_cache()
         return jsonify({"success": True, "inserted": inserted_count, "processed": len(batch)})
     except Exception as e:
-        print(f"UPLOAD ERROR: {str(e)}")
         return jsonify({"error": str(e)}), 500
 
 @app.route("/api/support/sync-links", methods=["POST"])
@@ -419,14 +418,13 @@ def api_support_upload():
                 inserted_count += len(chunk)
         
         return jsonify({
-            "success": True, 
-            "inserted": inserted_count, 
+            "success": True,
+            "inserted": inserted_count,
             "processed": len(batch),
             "skipped": 0,
             "failed": 0
         })
     except Exception as e:
-        print(f"SUPPORT UPLOAD ERROR: {str(e)}")
         return jsonify({"error": str(e)}), 500
 
 @app.route("/api/export")
@@ -442,9 +440,6 @@ def export_excel():
         page_size = 1000
         offsets = list(range(0, total_count, page_size))
         def fetch_batch(offset):
-            # Export should probably also respect the "latest" logic if status is empty?
-            # But usually export is for all or specific.
-            # Let's match the get_drawings logic for consistency.
             target = TABLE_LATEST if status == "" else TABLE_ALL
             q = supabase.table(target).select(cols)
             if search: q = q.or_(f"drawing_no.ilike.%{search}%,line_no.ilike.%{search}%,title.ilike.%{search}%")

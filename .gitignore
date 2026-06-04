@@ -1,0 +1,10 @@
+.env
+__pycache__/
+*.pyc
+*.pyo
+debug.log
+server.log
+scratch/
+Raw Data/
+*.tmp
+.DS_Store
