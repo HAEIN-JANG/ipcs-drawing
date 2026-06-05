@@ -41,8 +41,6 @@ def _init_cloudinary():
     cloudinary.config(api_key=m.group(1), api_secret=m.group(2), cloud_name=m.group(3), secure=True)
     return m.group(3)
 
-_init_cloudinary()
-
 TABLE_ALL = "dwg_iso"
 TABLE_LATEST = "dwg_latest"
 TABLE_SUPPORT = "support_master"
