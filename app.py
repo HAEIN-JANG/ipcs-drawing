@@ -447,21 +447,10 @@ def api_support_stats():
 
 @app.route("/api/support/filters")
 def api_support_filters():
-    supabase = get_client()
-    types, offset, batch = set(), 0, 1000
-    while True:
-        rows = supabase.table("support_master").select("type").range(offset, offset + batch - 1).execute()
-        for r in rows.data:
-            if r.get("type"):
-                types.add(r["type"])
-        if len(rows.data) < batch:
-            break
-        offset += batch
-    types = sorted(types)
     return jsonify({
         "systems":   ["ALL", "AS", "ATM", "CCW", "CD", "DW", "FG", "FGH", "FO", "FW", "GT MISC",
                       "HP", "HW", "IA", "LO", "LP", "N2", "PW", "RW", "SA", "SS", "ST MISC", "SW", "WWT"],
-        "types":     types,
+        "types":     ["TYPICAL", "SPECIAL", "G", "GS", "U", "US", "W", "WS"],
         "revisions": ["C01", "C01A", "C01B"],
     })
 
@@ -482,8 +471,12 @@ def api_support_drawings():
         if search:
             s = search.replace(',', '\\,')
             query = query.or_(f"support_drawing.ilike.%{s}%,line_no.ilike.%{s}%,iso_drawing.ilike.%{s}%,system.ilike.%{s}%,type.ilike.%{s}%")
-        if system:      query = query.eq("system", system)
-        if type_filter: query = query.eq("type", type_filter)
+        if system: query = query.eq("system", system)
+        if type_filter:
+            if type_filter in ("G", "GS", "U", "US", "W", "WS"):
+                query = query.like("type", f"({type_filter}-%")
+            else:
+                query = query.eq("type", type_filter)
 
         res = query.order("system").order("support_drawing").range(offset, offset + per_page - 1).execute()
 
