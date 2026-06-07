@@ -447,10 +447,21 @@ def api_support_stats():
 
 @app.route("/api/support/filters")
 def api_support_filters():
+    supabase = get_client()
+    types, offset, batch = set(), 0, 1000
+    while True:
+        rows = supabase.table("support_master").select("type").range(offset, offset + batch - 1).execute()
+        for r in rows.data:
+            if r.get("type"):
+                types.add(r["type"])
+        if len(rows.data) < batch:
+            break
+        offset += batch
+    types = sorted(types)
     return jsonify({
         "systems":   ["ALL", "AS", "ATM", "CCW", "CD", "DW", "FG", "FGH", "FO", "FW", "GT MISC",
                       "HP", "HW", "IA", "LO", "LP", "N2", "PW", "RW", "SA", "SS", "ST MISC", "SW", "WWT"],
-        "types":     ["TYPICAL", "SPECIAL"],
+        "types":     types,
         "revisions": ["C01", "C01A", "C01B"],
     })
 
