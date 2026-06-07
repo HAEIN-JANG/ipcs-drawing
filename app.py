@@ -439,7 +439,7 @@ th {{ background-color: #f1f5f9; font-weight: 600; text-transform: uppercase; }}
 def api_support_stats():
     try:
         supabase = get_client()
-        res = supabase.table(TABLE_SUPPORT).select("id", count="exact").limit(1).execute()
+        res = supabase.table("support_latest").select("id", count="exact").limit(1).execute()
         return jsonify({"total": res.count or 0})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
