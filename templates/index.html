@@ -1500,6 +1500,13 @@
     function safeHref(url) {
       return (url && url.startsWith('https://')) ? url : null;
     }
+    function makeDwgLink(url, label) {
+      const href = safeHref(url);
+      const text = esc(label) || '—';
+      return href
+        ? `<a href="${href}" target="_blank" class="td-dwgno">${text}</a>`
+        : `<span class="td-dwgno no-link">${text}</span>`;
+    }
 
     /* ─── Load Stats & Filters ────────────────────────── */
     function applyStats(data) {
@@ -1613,10 +1620,7 @@
         else if (r === 'C01B') revC = 'rev-amber';
         else if (r === 'C01') revC = 'rev-blue';
 
-        const href = safeHref(d.file_link);
-        const dwgNoHtml = href
-          ? `<a href="${href}" target="_blank" class="td-dwgno">${esc(d.drawing_no) || '—'}</a>`
-          : `<span class="td-dwgno no-link">${esc(d.drawing_no) || '—'}</span>`;
+        const dwgNoHtml = makeDwgLink(d.file_link, d.drawing_no);
 
         tableHtml += `
       <tr>
@@ -1765,11 +1769,8 @@
 
       state.data.forEach((d, idx) => {
         // TYPE 코드가 도면번호 끝에 중복 포함된 경우 제거 (예: 1"-AV-B1-34/571-GB1-G-202(GS-70) → 1"-AV-B1-34/571-GB1-G-202)
-        const dwgNo = esc((d.support_drawing || '').replace(/\([^)]+\)\s*$/, '').trim()) || '—';
-        const href = safeHref(d.file_link);
-        const dwgLink = href
-          ? `<a href="${href}" target="_blank" class="td-dwgno">${dwgNo}</a>`
-          : `<span class="td-dwgno no-link">${dwgNo}</span>`;
+        const rawDwg = (d.support_drawing || '').replace(/\([^)]+\)\s*$/, '').trim();
+        const dwgLink = makeDwgLink(d.file_link, rawDwg);
 
         tableHtml += `
           <tr>
@@ -1852,11 +1853,7 @@
       `;
 
       state.data.forEach((d, idx) => {
-        const href = safeHref(d.file_link);
-        const dwgNo = esc(d.drawing_no) || '—';
-        const dwgLink = href
-          ? `<a href="${href}" target="_blank" class="td-dwgno">${dwgNo}</a>`
-          : `<span class="td-dwgno no-link">${dwgNo}</span>`;
+        const dwgLink = makeDwgLink(d.file_link, d.drawing_no);
 
         const r = String(d.revision || '').toUpperCase();
         const revC = r === 'C01A' ? 'rev-green' : r === 'C01B' ? 'rev-amber' : 'rev-blue';
@@ -1938,11 +1935,7 @@
       `;
 
       state.data.forEach((d, idx) => {
-        const href = safeHref(d.file_link);
-        const dwgNo = esc(d.drawing_no) || '—';
-        const dwgLink = href
-          ? `<a href="${href}" target="_blank" class="td-dwgno">${dwgNo}</a>`
-          : `<span class="td-dwgno no-link">${dwgNo}</span>`;
+        const dwgLink = makeDwgLink(d.file_link, d.drawing_no);
 
         let revC = 'rev-blue';
         const r = String(d.revision || '').toUpperCase();
@@ -2024,11 +2017,7 @@
       `;
 
       state.data.forEach((d, idx) => {
-        const href = safeHref(d.file_link);
-        const dwgNo = esc(d.drawing_no) || '—';
-        const dwgLink = href
-          ? `<a href="${href}" target="_blank" class="td-dwgno">${dwgNo}</a>`
-          : `<span class="td-dwgno no-link">${dwgNo}</span>`;
+        const dwgLink = makeDwgLink(d.file_link, d.drawing_no);
 
         const r = String(d.revision || '').toUpperCase();
         const revC = r === 'C01A' ? 'rev-green' : r === 'C01B' ? 'rev-amber' : 'rev-blue';

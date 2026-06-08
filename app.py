@@ -51,17 +51,20 @@ TABLE_VALVE      = "valve_master"
 TABLE_SPECIALITY = "speciality_master"
 TABLE_PID        = "pid_master"
 
+AREAS     = ["MB", "YARD", "YD BLDG"]
+SYSTEMS   = ["AS", "ATM", "CCW", "CD", "DW", "FG", "FGH", "FO", "FW", "GT MISC",
+             "HP", "HW", "IA", "LO", "LP", "N2", "PW", "RW", "SA", "SS", "ST MISC", "SW", "WWT"]
+REVISIONS = ["C01", "C01A", "C01B"]
+
 _supabase_client: Client = None
 
 def get_client() -> Client:
     global _supabase_client
     if _supabase_client is not None:
         return _supabase_client
-    url = os.environ.get("SUPABASE_URL") or SUPABASE_URL
-    key = os.environ.get("SUPABASE_KEY") or SUPABASE_KEY
-    if not url or not key:
+    if not SUPABASE_URL or not SUPABASE_KEY:
         raise ValueError("SUPABASE_URL, SUPABASE_KEY를 확인하세요.")
-    _supabase_client = create_client(url, key, options=ClientOptions(schema="drawing"))
+    _supabase_client = create_client(SUPABASE_URL, SUPABASE_KEY, options=ClientOptions(schema="drawing"))
     return _supabase_client
 
 import time as _time
@@ -199,12 +202,7 @@ def api_init():
     global _stats_cache, _stats_cache_ts
     try:
         supabase = get_client()
-        FILTERS = {
-            "areas":    ["MB", "YARD", "YD BLDG"],
-            "systems":  ["AS", "ATM", "CCW", "CD", "DW", "FG", "FGH", "FO", "FW", "GT MISC",
-                         "HP", "HW", "IA", "LO", "LP", "N2", "PW", "RW", "SA", "SS", "ST MISC", "SW", "WWT"],
-            "statuses": ["C01", "C01A", "C01B"],
-        }
+        FILTERS = {"areas": AREAS, "systems": SYSTEMS, "statuses": REVISIONS}
         DWG_COLS = "area,system,drawing_no,line_no,title,revision,issued_date,file_link"
 
         def q_drawings():
@@ -219,20 +217,11 @@ def api_init():
             stats = _stats_cache
         else:
             from concurrent.futures import ThreadPoolExecutor
-            def q_total(): return supabase.table(TABLE_ALL).select("id", count="exact").limit(1).execute()
-            def q_c01():   return supabase.table(TABLE_ALL).select("id", count="exact").eq("revision", "C01").limit(1).execute()
-            def q_c01a():  return supabase.table(TABLE_ALL).select("id", count="exact").eq("revision", "C01A").limit(1).execute()
-            def q_c01b():  return supabase.table(TABLE_ALL).select("id", count="exact").eq("revision", "C01B").limit(1).execute()
-            with ThreadPoolExecutor(max_workers=5) as ex:
-                dwg_res, t, c01, c01a, c01b = list(
-                    ex.map(lambda f: f(), [q_drawings, q_total, q_c01, q_c01a, q_c01b])
-                )
-            stats = {
-                "total": t.count    if hasattr(t,    "count") else 0,
-                "C01":   c01.count  if hasattr(c01,  "count") else 0,
-                "C01A":  c01a.count if hasattr(c01a, "count") else 0,
-                "C01B":  c01b.count if hasattr(c01b, "count") else 0,
-            }
+            with ThreadPoolExecutor(max_workers=2) as ex:
+                f_dwg   = ex.submit(q_drawings)
+                f_stats = ex.submit(_get_iso_stats, supabase)
+                dwg_res = f_dwg.result()
+                stats   = f_stats.result()
             _stats_cache = stats
             _stats_cache_ts = _time.time()
 
@@ -244,12 +233,7 @@ def api_init():
 
 @app.route("/api/filters")
 def get_filters():
-    return jsonify({
-        "areas":    ["MB", "YARD", "YD BLDG"],
-        "systems":  ["AS", "ATM", "CCW", "CD", "DW", "FG", "FGH", "FO", "FW", "GT MISC",
-                     "HP", "HW", "IA", "LO", "LP", "N2", "PW", "RW", "SA", "SS", "ST MISC", "SW", "WWT"],
-        "statuses": ["C01", "C01A", "C01B"],
-    })
+    return jsonify({"areas": AREAS, "systems": SYSTEMS, "statuses": REVISIONS})
 
 
 @app.route("/api/upload", methods=["POST"])
@@ -448,8 +432,7 @@ def api_support_stats():
 @app.route("/api/support/filters")
 def api_support_filters():
     return jsonify({
-        "systems":   ["ALL", "AS", "ATM", "CCW", "CD", "DW", "FG", "FGH", "FO", "FW", "GT MISC",
-                      "HP", "HW", "IA", "LO", "LP", "N2", "PW", "RW", "SA", "SS", "ST MISC", "SW", "WWT"],
+        "systems":   ["ALL"] + SYSTEMS,
         "types":     ["TYPICAL", "SPECIAL", "G", "GS", "U", "US", "W", "WS"],
         "revisions": ["C01", "C01A", "C01B"],
     })
@@ -678,26 +661,9 @@ def api_pid_sync_links():
                 break
             page_from += page_size
 
-        pid_nos = {row["drawing_no"].lower() for row in master_data if row.get("drawing_no")}
-        uploaded = {}
-        next_cursor = None
-        while True:
-            import cloudinary.api
-            kwargs = {"type": "upload", "max_results": 500, "resource_type": "image"}
-            if next_cursor:
-                kwargs["next_cursor"] = next_cursor
-            res = cloudinary.api.resources(**kwargs)
-            for item in res.get("resources", []):
-                base = item["public_id"].split("/")[-1].lower()
-                if base not in pid_nos:
-                    continue
-                url = item.get("secure_url", "")
-                if item.get("format") == "pdf" and not url.lower().endswith(".pdf"):
-                    url += ".pdf"
-                uploaded[base] = url
-            next_cursor = res.get("next_cursor")
-            if not next_cursor:
-                break
+        pid_nos  = {row["drawing_no"].lower() for row in master_data if row.get("drawing_no")}
+        all_cld  = _fetch_cloudinary_all()
+        uploaded = {k.lower(): v for k, v in all_cld.items() if k.lower() in pid_nos}
 
         updates = []
         for row in master_data:
