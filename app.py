@@ -72,6 +72,10 @@ _stats_cache = None
 _stats_cache_ts = 0
 STATS_CACHE_TTL = 60
 
+_cld_cache: dict = None
+_cld_cache_ts: float = 0
+CLD_CACHE_TTL = 300  # 5분
+
 def _invalidate_stats_cache():
     global _stats_cache, _stats_cache_ts
     _stats_cache = None
@@ -113,8 +117,11 @@ def _configure_cloudinary():
     return cloud_name
 
 def _fetch_cloudinary_all(resource_type="image"):
-    """Cloudinary 전체 파일 목록을 페이지네이션으로 수집"""
+    """Cloudinary 전체 파일 목록을 수집 (5분 캐시)"""
+    global _cld_cache, _cld_cache_ts
     import cloudinary.api
+    if _cld_cache and (_time.time() - _cld_cache_ts) < CLD_CACHE_TTL:
+        return _cld_cache
     uploaded = {}
     next_cursor = None
     while True:
@@ -128,6 +135,8 @@ def _fetch_cloudinary_all(resource_type="image"):
         next_cursor = res.get("next_cursor")
         if not next_cursor:
             break
+    _cld_cache = uploaded
+    _cld_cache_ts = _time.time()
     return uploaded
 
 
@@ -513,10 +522,8 @@ def api_support_upload():
 @app.route("/api/support/sync-links", methods=["POST"])
 def api_support_sync_links():
     try:
-        cloud_name = _configure_cloudinary()
+        _configure_cloudinary()
         supabase = get_client()
-
-        supabase.table(TABLE_SUPPORT).update({"file_link": ""}).neq("id", 0).execute()
 
         master_data = []
         page_from, page_size = 0, 1000
@@ -539,13 +546,25 @@ def api_support_sync_links():
             if not dwg or not rev:
                 continue
             safe = str(dwg).replace('"', '').replace('/', '_')
-            fname = f"{safe}_{rev.upper()}"
-            if fname in uploaded or f"{fname}.pdf" in uploaded:
-                url = f"https://res.cloudinary.com/{cloud_name}/image/upload/{fname}.pdf"
-                updates.append({"id": row["id"], "file_link": url})
+            safe = re.sub(r'\s*\([^)]+\)\s*$', '', safe).strip()
+            rev_up = rev.upper()
+            secure_url = None
+            # Special: Drawing_NO_Rev / Typical: Drawing_NO (revision 없음)
+            for fname in (f"{safe}_{rev_up}", f"{safe}-{rev_up}", safe):
+                if fname in uploaded:
+                    secure_url = uploaded[fname]
+                    break
+                if f"{fname}.pdf" in uploaded:
+                    secure_url = uploaded[f"{fname}.pdf"]
+                    break
+            if secure_url:
+                # secure_url이 .pdf 로 끝나지 않으면 추가
+                url = secure_url if secure_url.lower().endswith(".pdf") else secure_url + ".pdf"
+                updates.append({"id": row["id"], "support_drawing": dwg, "revision": rev, "file_link": url})
 
-        for i in range(0, len(updates), 1000):
-            supabase.table(TABLE_SUPPORT).upsert(updates[i:i+1000]).execute()
+        supabase.table(TABLE_SUPPORT).update({"file_link": None}).neq("id", 0).execute()
+        for i in range(0, len(updates), 500):
+            supabase.table(TABLE_SUPPORT).upsert(updates[i:i + 500], on_conflict="support_drawing,revision").execute()
 
         return jsonify({"success": True, "synced": len(updates),
                         "message": f"실제 업로드된 {len(updates)}개의 도면만 링크를 연결했습니다."})
@@ -644,11 +663,10 @@ def api_pid_upload():
 @app.route("/api/pid/sync-links", methods=["POST"])
 def api_pid_sync_links():
     try:
-        cloud_name = _configure_cloudinary()
+        _configure_cloudinary()
         supabase = get_client()
-        supabase.table(TABLE_PID).update({"file_link": ""}).neq("id", 0).execute()
+        supabase.table(TABLE_PID).update({"file_link": None}).neq("id", 0).execute()
 
-        # 페이지네이션으로 전체 pid_master 수집
         master_data, page_from, page_size = [], 0, 1000
         while True:
             res = supabase.table(TABLE_PID).select("id,drawing_no").range(
@@ -672,10 +690,11 @@ def api_pid_sync_links():
                 continue
             url = uploaded.get(dwg.lower())
             if url:
-                updates.append({"id": row["id"], "drawing_no": dwg, "file_link": url})
+                link = url if url.lower().endswith(".pdf") else url + ".pdf"
+                updates.append({"id": row["id"], "drawing_no": dwg, "file_link": link})
 
         for i in range(0, len(updates), 500):
-            supabase.table(TABLE_PID).upsert(updates[i:i+500]).execute()
+            supabase.table(TABLE_PID).upsert(updates[i:i+500], on_conflict="drawing_no").execute()
 
         return jsonify({"success": True, "synced": len(updates),
                         "message": f"{len(updates)}개 PID 도면 링크 연결 완료"})

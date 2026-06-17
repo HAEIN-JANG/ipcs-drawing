@@ -1365,6 +1365,11 @@
           document.getElementById('stat-total').textContent = (d.total || 0).toLocaleString();
         }).catch(() => {});
         fetch('/api/support/filters').then(r => r.json()).then(d => {
+          if (d.systems) {
+            const el = document.getElementById('filter-system');
+            el.innerHTML = '<option value="">ALL SYSTEM</option>' +
+              d.systems.filter(v => v !== 'ALL').map(v => `<option value="${v}">${v}</option>`).join('');
+          }
           if (d.types) {
             const el = document.getElementById('filter-type');
             el.innerHTML = '<option value="">ALL TYPE</option>' +
@@ -1513,7 +1518,6 @@
       document.getElementById('stat-total').textContent = (data.total || 0).toLocaleString();
       document.getElementById('stat-c01').textContent = (data.C01 || 0).toLocaleString();
       document.getElementById('stat-c01a').textContent = (data.C01A || 0).toLocaleString();
-      document.getElementById('stat-c01b').textContent = (data.C01B || 0).toLocaleString();
     }
 
     async function loadStats() {
@@ -1657,6 +1661,10 @@
             loadSupportDrawings();
           } else if (state.category === 'valve') {
             loadValveDrawings();
+          } else if (state.category === 'speciality') {
+            loadSpecialityDrawings();
+          } else if (state.category === 'pid') {
+            loadPidDrawings();
           } else {
             loadDrawings();
           }
@@ -1714,7 +1722,9 @@
         });
         const res = await fetch(`/api/support/drawings?${params}`);
         const data = await res.json();
-        
+
+        if (data.error) throw new Error(data.error);
+
         // Prevent race condition
         if (state.category !== 'support') return;
 
@@ -2185,11 +2195,11 @@
             <div class="result-lbl">UPDATED</div>
           </div>
           <div class="result-item">
-            <div class="result-val">${data.skipped.toLocaleString()}</div>
+            <div class="result-val">${(data.skipped ?? 0).toLocaleString()}</div>
             <div class="result-lbl">NO CHANGE</div>
           </div>
         </div>
-        ${data.failed > 0 ? `<div style="margin-top:10px; color:var(--red); font-size:11px;">⚠️ ${data.failed}건의 오류가 발생했습니다.</div>` : ''}
+        ${(data.failed ?? 0) > 0 ? `<div style="margin-top:10px; color:var(--red); font-size:11px;">⚠️ ${data.failed}건의 오류가 발생했습니다.</div>` : ''}
       `;
 
           // 통계 & 목록 갱신
