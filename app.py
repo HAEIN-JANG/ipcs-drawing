@@ -752,6 +752,86 @@ def api_valve_drawings():
         return jsonify({"error": str(e)}), 500
 
 
+@app.route("/api/valve/upload", methods=["POST"])
+def api_valve_upload():
+    try:
+        file = request.files.get("file")
+        if not file:
+            return jsonify({"error": "No file shared"}), 400
+        df = pd.read_excel(io.BytesIO(file.read()), header=1)
+        df.columns = [str(c).strip() for c in df.columns]
+        df = df.fillna("")
+        supabase = get_client()
+        batch = []
+        for idx, r in df.iterrows():
+            dwg_no = str(r.get("Drawing No", r.get("Drawing No.", ""))).strip()
+            if not dwg_no or dwg_no == "nan":
+                continue
+            raw_date = r.get("Date", "")
+            if hasattr(raw_date, "strftime"):
+                date_val = raw_date.strftime("%Y-%m-%d")
+            else:
+                date_val = str(raw_date).strip()[:10] if raw_date and str(raw_date) != "nan" else ""
+            batch.append({
+                "id":          int(r.get("No", idx + 1)),
+                "valve":       str(r.get("Valve", r.get("Item", ""))).strip(),
+                "drawing_no":  dwg_no,
+                "title":       str(r.get("Title", "")).strip(),
+                "revision":    str(r.get("Rev.", r.get("Revision", ""))).strip(),
+                "issued_date": date_val,
+                "file_link":   "",
+            })
+        inserted = 0
+        for i in range(0, len(batch), 500):
+            supabase.table(TABLE_VALVE).upsert(batch[i:i+500], on_conflict="drawing_no").execute()
+            inserted += len(batch[i:i+500])
+        return jsonify({"success": True, "processed": len(batch), "inserted": inserted})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/valve/sync-links", methods=["POST"])
+def api_valve_sync_links():
+    try:
+        _configure_cloudinary()
+        supabase = get_client()
+        supabase.table(TABLE_VALVE).update({"file_link": None}).neq("id", 0).execute()
+
+        master_data, page_from, page_size = [], 0, 1000
+        while True:
+            res = supabase.table(TABLE_VALVE).select("id,drawing_no").range(
+                page_from, page_from + page_size - 1
+            ).execute()
+            if not res.data:
+                break
+            master_data.extend(res.data)
+            if len(res.data) < page_size:
+                break
+            page_from += page_size
+
+        all_cld  = _fetch_cloudinary_all()
+        dwg_nos  = {row["drawing_no"].lower() for row in master_data if row.get("drawing_no")}
+        uploaded = {k.lower(): v for k, v in all_cld.items() if k.lower() in dwg_nos}
+
+        updates = []
+        for row in master_data:
+            dwg = row.get("drawing_no")
+            if not dwg:
+                continue
+            url = uploaded.get(dwg.lower())
+            if url:
+                link = url if url.lower().endswith(".pdf") else url + ".pdf"
+                updates.append({"id": row["id"], "drawing_no": dwg, "file_link": link})
+
+        for i in range(0, len(updates), 500):
+            supabase.table(TABLE_VALVE).upsert(updates[i:i+500], on_conflict="drawing_no").execute()
+
+        return jsonify({"success": True, "synced": len(updates),
+                        "message": f"{len(updates)}개 Valve 도면 링크 연결 완료"})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
 # ── Speciality Drawing ────────────────────────────────────────
 
 @app.route("/api/speciality/stats")
@@ -798,6 +878,88 @@ def api_speciality_drawings():
         for d in res.data:
             _sanitize_link(d)
         return jsonify({"total": res.count, "data": res.data})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/speciality/upload", methods=["POST"])
+def api_speciality_upload():
+    try:
+        file = request.files.get("file")
+        if not file:
+            return jsonify({"error": "No file shared"}), 400
+        df = pd.read_excel(io.BytesIO(file.read()), header=1)
+        df.columns = [str(c).strip() for c in df.columns]
+        df = df.fillna("")
+        supabase = get_client()
+        batch = []
+        for idx, r in df.iterrows():
+            dwg_no = str(r.get("Drawing No", r.get("Drawing No.", ""))).strip()
+            if not dwg_no or dwg_no == "nan":
+                continue
+            raw_date = r.get("Date", "")
+            if hasattr(raw_date, "strftime"):
+                date_val = raw_date.strftime("%Y-%m-%d")
+            else:
+                date_val = str(raw_date).strip()[:10] if raw_date and str(raw_date) != "nan" else ""
+            batch.append({
+                "id":          int(r.get("No", idx + 1)),
+                "drawing_no":  dwg_no,
+                "title":       str(r.get("Title", "")).strip(),
+                "vendor":      str(r.get("Vendor", "")).strip(),
+                "class":       str(r.get("Class", "")).strip(),
+                "connection":  str(r.get("Connection", "")).strip(),
+                "revision":    str(r.get("Rev.", r.get("Revision", ""))).strip(),
+                "issued_date": date_val,
+                "file_link":   "",
+            })
+        inserted = 0
+        for i in range(0, len(batch), 500):
+            supabase.table(TABLE_SPECIALITY).upsert(batch[i:i+500], on_conflict="drawing_no").execute()
+            inserted += len(batch[i:i+500])
+        return jsonify({"success": True, "processed": len(batch), "inserted": inserted})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/speciality/sync-links", methods=["POST"])
+def api_speciality_sync_links():
+    try:
+        _configure_cloudinary()
+        supabase = get_client()
+        supabase.table(TABLE_SPECIALITY).update({"file_link": None}).neq("id", 0).execute()
+
+        master_data, page_from, page_size = [], 0, 1000
+        while True:
+            res = supabase.table(TABLE_SPECIALITY).select("id,drawing_no").range(
+                page_from, page_from + page_size - 1
+            ).execute()
+            if not res.data:
+                break
+            master_data.extend(res.data)
+            if len(res.data) < page_size:
+                break
+            page_from += page_size
+
+        all_cld  = _fetch_cloudinary_all()
+        dwg_nos  = {row["drawing_no"].lower() for row in master_data if row.get("drawing_no")}
+        uploaded = {k.lower(): v for k, v in all_cld.items() if k.lower() in dwg_nos}
+
+        updates = []
+        for row in master_data:
+            dwg = row.get("drawing_no")
+            if not dwg:
+                continue
+            url = uploaded.get(dwg.lower())
+            if url:
+                link = url if url.lower().endswith(".pdf") else url + ".pdf"
+                updates.append({"id": row["id"], "drawing_no": dwg, "file_link": link})
+
+        for i in range(0, len(updates), 500):
+            supabase.table(TABLE_SPECIALITY).upsert(updates[i:i+500], on_conflict="drawing_no").execute()
+
+        return jsonify({"success": True, "synced": len(updates),
+                        "message": f"{len(updates)}개 Speciality 도면 링크 연결 완료"})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 

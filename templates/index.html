@@ -1255,7 +1255,7 @@
           <ul>
             <li>Existing drawings (same NO. & REV.) will be automatically updated.</li>
             <li>New drawings will be automatically added to the master list.</li>
-            <li><strong>Excel Columns:</strong> system / support drawing / type / iso drawing / line_no / l1 / l2 / l3 / l4 / revision / issue date / file_link</li>
+            <li id="upload-col-hint"><strong>Excel Columns:</strong> —</li>
           </ul>
         </div>
       </div>
@@ -1790,10 +1790,10 @@
             <td class="col-sup-type">${esc(d.type || d.title) || '—'}</td>
             <td class="col-sup-iso">${esc(d.iso_drawing) || '—'}</td>
             <td class="col-sup-line">${esc(d.line_no) || '—'}</td>
-            <td class="col-sup-lx">${esc(d.l1) || '—'}</td>
-            <td class="col-sup-lx">${esc(d.l2) || '—'}</td>
-            <td class="col-sup-lx">${esc(d.l3) || '—'}</td>
-            <td class="col-sup-lx">${esc(d.l4) || '—'}</td>
+            <td class="col-sup-lx">${esc(d.l1) || ''}</td>
+            <td class="col-sup-lx">${esc(d.l2) || ''}</td>
+            <td class="col-sup-lx">${esc(d.l3) || ''}</td>
+            <td class="col-sup-lx">${esc(d.l4) || ''}</td>
             <td class="col-sup-rev">${esc(d.revision) || '—'}</td>
             <td class="col-sup-date">${esc((d.issued_date || '').substring(2, 10)) || '—'}</td>
           </tr>
@@ -2088,7 +2088,17 @@
     /* ─── Upload Modal ───────────────────────────────── */
     let selectedFile = null;
 
+    const UPLOAD_COL_HINTS = {
+      iso:        'drawing_no / line_no / system / area / bore / title / revision / issued_date / file_link',
+      support:    'system / support drawing / type / iso drawing / line_no / l1 / l2 / l3 / l4 / revision / issue date',
+      valve:      'No / Valve / Drawing No / Title / Rev. / Date  (2행 헤더)',
+      speciality: 'No / Drawing No / Title / Vendor / Class / Connection / Rev. / Date  (2행 헤더)',
+      pid:        'No / System / Drawing No / Title / Rev. / Date  (2행 헤더)',
+    };
+
     function openUploadModal() {
+      const hint = document.getElementById('upload-col-hint');
+      if (hint) hint.innerHTML = `<strong>Excel Columns:</strong> ${UPLOAD_COL_HINTS[state.category] || '—'}`;
       document.getElementById('upload-modal').classList.add('show');
       resetUploadModal();
     }
@@ -2272,7 +2282,6 @@
       }
     }
 
-    /* ─── Debounce ───────────────────────────────────── */
     /* ─── Event bindings ─────────────────────────────── */
     document.getElementById('search').addEventListener('keydown', e => {
       if (e.key === 'Enter') handleSearch();
