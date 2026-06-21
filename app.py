@@ -581,7 +581,7 @@ def api_support_sync_links():
             page_from += page_size
 
         uploaded = _fetch_cloudinary_all()
-        # 이중 하이픈 오타 업로드 파일도 매핑하기 위한 정규화 딕셔너리
+        # 이중 하이픈 오타 파일명 처리용 정규화 딕셔너리 (1건 사용 중)
         uploaded_norm = {k.replace('--', '-'): v for k, v in uploaded.items()}
 
         updates = []
@@ -591,28 +591,20 @@ def api_support_sync_links():
                 continue
             safe = str(dwg).replace('"', '').replace('/', '_')
             safe = re.sub(r'\s*\([^)]+\)\s*$', '', safe).strip()
-            # BA1/BA2 없는 파일명도 검색 (예: 12-HS-B1-26_011-BA1-U-009 → 12-HS-B1-26_011-U-009)
-            safe_no_ba = re.sub(r'-BA[12]', '', safe)
             rev_up = rev.upper()
             secure_url = None
-            search_safes = [safe] if safe == safe_no_ba else [safe, safe_no_ba]
-            # Special: Drawing_NO_Rev / Typical: Drawing_NO (revision 없음)
-            for s in search_safes:
-                for fname in (f"{s}_{rev_up}", f"{s}-{rev_up}", s):
-                    if fname in uploaded:
-                        secure_url = uploaded[fname]
-                        break
-                    if f"{fname}.pdf" in uploaded:
-                        secure_url = uploaded[f"{fname}.pdf"]
-                        break
-                    # 이중 하이픈 오타 파일명 처리 (예: foo--bar → foo-bar)
-                    if fname in uploaded_norm:
-                        secure_url = uploaded_norm[fname]
-                        break
-                    if f"{fname}.pdf" in uploaded_norm:
-                        secure_url = uploaded_norm[f"{fname}.pdf"]
-                        break
-                if secure_url:
+            for fname in (f"{safe}_{rev_up}", f"{safe}-{rev_up}", safe):
+                if fname in uploaded:
+                    secure_url = uploaded[fname]
+                    break
+                if f"{fname}.pdf" in uploaded:
+                    secure_url = uploaded[f"{fname}.pdf"]
+                    break
+                if fname in uploaded_norm:
+                    secure_url = uploaded_norm[fname]
+                    break
+                if f"{fname}.pdf" in uploaded_norm:
+                    secure_url = uploaded_norm[f"{fname}.pdf"]
                     break
             if secure_url:
                 # secure_url이 .pdf 로 끝나지 않으면 추가
