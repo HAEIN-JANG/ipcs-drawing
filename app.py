@@ -56,6 +56,41 @@ SYSTEMS   = ["AS", "ATM", "CCW", "CD", "DW", "FG", "FGH", "FO", "FW", "GT MISC",
              "HP", "HW", "IA", "LO", "LP", "N2", "PW", "RW", "SA", "SS", "ST MISC", "SW", "WWT"]
 REVISIONS = ["C01", "C01A", "C01B"]
 
+_SIZE_RE = re.compile(r'^(\d+(?:\s+\d+/\d+)?(?:/\d+)?)\s*"')
+SMALL_PREFIXES = ['1/2"', '3/4"', '1 1/4"', '1 1/2"', '1"', '2"']
+
+def _line_size(line_no):
+    if not line_no:
+        return ''
+    m = _SIZE_RE.match(str(line_no).strip())
+    if not m:
+        return ''
+    raw = m.group(1).strip()
+    try:
+        if ' ' in raw:
+            parts = raw.split()
+            whole = int(parts[0])
+            n, d = parts[1].split('/')
+            val = whole + int(n) / int(d)
+        elif '/' in raw:
+            n, d = raw.split('/')
+            val = int(n) / int(d)
+        else:
+            val = float(raw)
+        return 'Small' if val <= 2 else 'Large'
+    except (ValueError, ZeroDivisionError):
+        return ''
+
+def _apply_size_filter(query, size):
+    if size == 'Small':
+        patterns = ','.join(f'line_no.ilike.{p}%' for p in SMALL_PREFIXES)
+        return query.or_(patterns)
+    elif size == 'Large':
+        for p in SMALL_PREFIXES:
+            query = query.filter("line_no", "not.ilike", f'{p}%')
+        return query
+    return query
+
 _supabase_client: Client = None
 
 def get_client() -> Client:
@@ -156,6 +191,7 @@ def get_drawings():
         area     = request.args.get("area", "")
         system   = request.args.get("system", "")
         status   = request.args.get("status", "")
+        size     = request.args.get("size", "")
         page     = _safe_int(request.args.get("page", 1), 1)
         per_page = _safe_int(request.args.get("per_page", 20), 20)
         offset   = (page - 1) * per_page
@@ -170,9 +206,11 @@ def get_drawings():
         if area:   query = query.eq("area", area)
         if system: query = query.eq("system", system)
         if status: query = query.eq("revision", status)
+        if size:   query = _apply_size_filter(query, size)
 
         res = query.order("drawing_no").range(offset, offset + per_page - 1).execute()
         for row in res.data:
+            row["size"] = _line_size(row.get("line_no"))
             if row.get("file_link"):
                 row["file_link"] = get_cloudinary_url(row["file_link"])
 
@@ -217,6 +255,7 @@ def api_init():
         def q_drawings():
             res = supabase.table(TABLE_LATEST).select(DWG_COLS, count="exact").order("drawing_no").range(0, 19).execute()
             for row in res.data:
+                row["size"] = _line_size(row.get("line_no"))
                 if row.get("file_link"):
                     row["file_link"] = get_cloudinary_url(row["file_link"])
             return res
@@ -453,6 +492,7 @@ def api_support_drawings():
         search      = request.args.get("search", "").strip()
         system      = request.args.get("system", "")
         type_filter = request.args.get("type", "")
+        size        = request.args.get("size", "")
         page        = _safe_int(request.args.get("page", 1), 1)
         per_page    = _safe_int(request.args.get("per_page", 20), 20)
         offset      = (page - 1) * per_page
@@ -469,10 +509,12 @@ def api_support_drawings():
                 query = query.like("type", f"({type_filter}-%")
             else:
                 query = query.eq("type", type_filter)
+        if size: query = _apply_size_filter(query, size)
 
         res = query.order("system").order("support_drawing").range(offset, offset + per_page - 1).execute()
 
         for d in res.data:
+            d["size"] = _line_size(d.get("line_no"))
             d["title"] = d.get("type", "")
             _sanitize_link(d)
 
@@ -539,6 +581,8 @@ def api_support_sync_links():
             page_from += page_size
 
         uploaded = _fetch_cloudinary_all()
+        # 이중 하이픈 오타 업로드 파일도 매핑하기 위한 정규화 딕셔너리
+        uploaded_norm = {k.replace('--', '-'): v for k, v in uploaded.items()}
 
         updates = []
         for row in master_data:
@@ -547,15 +591,28 @@ def api_support_sync_links():
                 continue
             safe = str(dwg).replace('"', '').replace('/', '_')
             safe = re.sub(r'\s*\([^)]+\)\s*$', '', safe).strip()
+            # BA1/BA2 없는 파일명도 검색 (예: 12-HS-B1-26_011-BA1-U-009 → 12-HS-B1-26_011-U-009)
+            safe_no_ba = re.sub(r'-BA[12]', '', safe)
             rev_up = rev.upper()
             secure_url = None
+            search_safes = [safe] if safe == safe_no_ba else [safe, safe_no_ba]
             # Special: Drawing_NO_Rev / Typical: Drawing_NO (revision 없음)
-            for fname in (f"{safe}_{rev_up}", f"{safe}-{rev_up}", safe):
-                if fname in uploaded:
-                    secure_url = uploaded[fname]
-                    break
-                if f"{fname}.pdf" in uploaded:
-                    secure_url = uploaded[f"{fname}.pdf"]
+            for s in search_safes:
+                for fname in (f"{s}_{rev_up}", f"{s}-{rev_up}", s):
+                    if fname in uploaded:
+                        secure_url = uploaded[fname]
+                        break
+                    if f"{fname}.pdf" in uploaded:
+                        secure_url = uploaded[f"{fname}.pdf"]
+                        break
+                    # 이중 하이픈 오타 파일명 처리 (예: foo--bar → foo-bar)
+                    if fname in uploaded_norm:
+                        secure_url = uploaded_norm[fname]
+                        break
+                    if f"{fname}.pdf" in uploaded_norm:
+                        secure_url = uploaded_norm[f"{fname}.pdf"]
+                        break
+                if secure_url:
                     break
             if secure_url:
                 # secure_url이 .pdf 로 끝나지 않으면 추가

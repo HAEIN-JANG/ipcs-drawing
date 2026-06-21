@@ -503,9 +503,9 @@
       padding: 10px;
       font-size: 11px;
       vertical-align: middle;
-      border-bottom: 1px solid var(--border-light);
+      border-bottom: 1px solid var(--border);
       text-align: center;
-      color: var(--text-main);
+      color: var(--text);
     }
 
     /* 컬럼 너비 조정 */
@@ -544,6 +544,12 @@
       width: 120px;
       min-width: 120px;
     }
+
+    /* Size Badge */
+    .size-badge { display: inline-block; font-size: 10px; font-weight: 600; padding: 2px 7px; border-radius: 4px; letter-spacing: .3px; }
+    .size-small { background: #e0f2fe; color: #0c4a6e; }
+    .size-large { background: #fef3c7; color: #92400e; }
+    .col-size { width: 70px; min-width: 70px; }
 
     /* Support Specific Columns */
     .col-sup-no { width: 40px; min-width: 40px; }
@@ -1116,6 +1122,12 @@
       <option value="">ALL SYSTEM</option>
     </select>
 
+    <select class="filter-select" id="filter-size" style="display:none">
+      <option value="">ALL SIZE</option>
+      <option value="Large">Large</option>
+      <option value="Small">Small</option>
+    </select>
+
     <select class="filter-select" id="filter-status">
       <option value="">ALL STATUS</option>
     </select>
@@ -1296,7 +1308,8 @@
         system: '',
         status: '',
         type: '',
-        title: ''
+        title: '',
+        size: ''
       },
       globalStats: {}
     };
@@ -1315,11 +1328,13 @@
       state.filters.status = '';
       state.filters.type = '';
       state.filters.title = '';
+      state.filters.size = '';
       document.getElementById('search').value = '';
       document.getElementById('filter-system').value = '';
       document.getElementById('filter-status').value = '';
       document.getElementById('filter-type').value = '';
       document.getElementById('filter-title').value = '';
+      document.getElementById('filter-size').value = '';
 
       // Update UI active state
       document.querySelectorAll('.nav-item').forEach(el => {
@@ -1346,6 +1361,8 @@
       if (titleFilter) titleFilter.style.display = (cat === 'speciality') ? '' : 'none';
       const systemFilter = document.getElementById('filter-system');
       if (systemFilter) systemFilter.style.display = (cat === 'valve' || cat === 'speciality') ? 'none' : '';
+      const sizeFilter = document.getElementById('filter-size');
+      if (sizeFilter) sizeFilter.style.display = (cat === 'iso' || cat === 'support') ? '' : 'none';
 
       // C01/C01A 통계 박스: Speciality/PID에서는 해당 없으므로 숨김
       const statC01Box  = document.getElementById('stat-c01')?.closest('.hstat');
@@ -1554,6 +1571,7 @@
         area: state.filters.area,
         system: state.filters.system,
         status: state.filters.status,
+        size: state.filters.size,
         page: state.page,
         per_page: state.perPage
       });
@@ -1607,6 +1625,7 @@
           <tr>
             <th class="col-no">NO.</th>
             <th class="col-sys">SYSTEM</th>
+            <th class="col-size">SIZE</th>
             <th class="col-dwg">DWG. NO.</th>
             <th class="col-line">LINE. NO.</th>
             <th class="col-title">DRAWING TITLE</th>
@@ -1626,10 +1645,13 @@
 
         const dwgNoHtml = makeDwgLink(d.file_link, d.drawing_no);
 
+        const sizeCls = d.size === 'Small' ? 'size-small' : d.size === 'Large' ? 'size-large' : '';
+        const sizeBadge = d.size ? `<span class="size-badge ${sizeCls}">${d.size}</span>` : '—';
         tableHtml += `
       <tr>
         <td class="col-no">${offset + idx + 1}</td>
         <td class="col-sys">${esc(d.system) || '—'}</td>
+        <td class="col-size">${sizeBadge}</td>
         <td class="col-dwg">${dwgNoHtml}</td>
         <td class="col-line">${esc(d.line_no) || '—'}</td>
         <td class="col-title">${esc(d.title) || '—'}</td>
@@ -1717,6 +1739,7 @@
           search: state.filters.search,
           system: state.filters.system,
           type: state.filters.type || '',
+          size: state.filters.size || '',
           page: state.page,
           per_page: state.perPage
         });
@@ -1762,6 +1785,7 @@
               <tr>
                 <th class="col-sup-no">NO.</th>
                 <th class="col-sup-sys">SYSTEM</th>
+                <th class="col-size">SIZE</th>
                 <th class="col-sup-dwg">SUPPORT DRAWING</th>
                 <th class="col-sup-type">TYPE</th>
                 <th class="col-sup-iso">ISO DRAWING</th>
@@ -1782,10 +1806,13 @@
         const rawDwg = (d.support_drawing || '').replace(/\([^)]+\)\s*$/, '').trim();
         const dwgLink = makeDwgLink(d.file_link, rawDwg);
 
+        const supSizeCls = d.size === 'Small' ? 'size-small' : d.size === 'Large' ? 'size-large' : '';
+        const supSizeBadge = d.size ? `<span class="size-badge ${supSizeCls}">${d.size}</span>` : '—';
         tableHtml += `
           <tr>
             <td class="col-sup-no">${offset + idx + 1}</td>
             <td class="col-sup-sys">${esc(d.system) || '—'}</td>
+            <td class="col-size">${supSizeBadge}</td>
             <td class="col-sup-dwg">${dwgLink}</td>
             <td class="col-sup-type">${esc(d.type || d.title) || '—'}</td>
             <td class="col-sup-iso">${esc(d.iso_drawing) || '—'}</td>
@@ -2267,6 +2294,7 @@
       state.filters.status = document.getElementById('filter-status').value;
       state.filters.type = document.getElementById('filter-type').value;
       state.filters.title = document.getElementById('filter-title').value;
+      state.filters.size = document.getElementById('filter-size').value;
       state.page = 1;
       
       if (state.category === 'support') {
@@ -2287,12 +2315,13 @@
       if (e.key === 'Enter') handleSearch();
     });
 
-    ['filter-system', 'filter-status', 'filter-type', 'filter-title'].forEach(id => {
+    ['filter-system', 'filter-size', 'filter-status', 'filter-type', 'filter-title'].forEach(id => {
       document.getElementById(id).addEventListener('change', e => {
         if (id === 'filter-system') state.filters.system = e.target.value;
+        if (id === 'filter-size')   state.filters.size   = e.target.value;
         if (id === 'filter-status') state.filters.status = e.target.value;
-        if (id === 'filter-type') state.filters.type = e.target.value;
-        if (id === 'filter-title') state.filters.title = e.target.value;
+        if (id === 'filter-type')   state.filters.type   = e.target.value;
+        if (id === 'filter-title')  state.filters.title  = e.target.value;
         handleSearch();
       });
     });
@@ -2330,6 +2359,8 @@
         document.getElementById('current-category-title').textContent = 'ISO DRAWING MASTER LIST';
         const syncBtn = document.getElementById('btn-sync');
         if (syncBtn) syncBtn.style.display = 'none';
+        const sizeFilterEl = document.getElementById('filter-size');
+        if (sizeFilterEl) sizeFilterEl.style.display = '';
       } catch (e) {
         console.error('Init failed, falling back:', e);
         await Promise.all([loadFilters(), loadStats()]);
