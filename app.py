@@ -51,7 +51,6 @@ TABLE_VALVE      = "valve_master"
 TABLE_SPECIALITY = "speciality_master"
 TABLE_PID        = "pid_master"
 
-AREAS     = ["MB", "YARD", "YD BLDG"]
 SYSTEMS   = ["AS", "ATM", "CCW", "CD", "DW", "FG", "FGH", "FO", "FW", "GT MISC",
              "HP", "HW", "IA", "LO", "LP", "N2", "PW", "RW", "SA", "SS", "ST MISC", "SW", "WWT"]
 REVISIONS = ["C01", "C01A", "C01B"]
@@ -188,7 +187,6 @@ def index():
 def get_drawings():
     try:
         search   = request.args.get("search", "").strip()
-        area     = request.args.get("area", "")
         system   = request.args.get("system", "")
         status   = request.args.get("status", "")
         size     = request.args.get("size", "")
@@ -202,8 +200,7 @@ def get_drawings():
 
         if search:
             s = search.replace(',', '\\,')
-            query = query.or_(f"drawing_no.ilike.%{s}%,line_no.ilike.%{s}%,title.ilike.%{s}%,system.ilike.%{s}%,area.ilike.%{s}%")
-        if area:   query = query.eq("area", area)
+            query = query.or_(f"drawing_no.ilike.%{s}%,line_no.ilike.%{s}%,title.ilike.%{s}%,system.ilike.%{s}%")
         if system: query = query.eq("system", system)
         if status: query = query.eq("revision", status)
         if size:   query = _apply_size_filter(query, size)
@@ -249,8 +246,8 @@ def api_init():
     global _stats_cache, _stats_cache_ts
     try:
         supabase = get_client()
-        FILTERS = {"areas": AREAS, "systems": SYSTEMS, "statuses": REVISIONS}
-        DWG_COLS = "area,system,drawing_no,line_no,title,revision,issued_date,file_link"
+        FILTERS = {"systems": SYSTEMS, "statuses": REVISIONS}
+        DWG_COLS = "system,drawing_no,line_no,title,revision,issued_date,file_link"
 
         def q_drawings():
             res = supabase.table(TABLE_LATEST).select(DWG_COLS, count="exact").order("drawing_no").range(0, 19).execute()
@@ -281,7 +278,7 @@ def api_init():
 
 @app.route("/api/filters")
 def get_filters():
-    return jsonify({"areas": AREAS, "systems": SYSTEMS, "statuses": REVISIONS})
+    return jsonify({"systems": SYSTEMS, "statuses": REVISIONS})
 
 
 @app.route("/api/upload", methods=["POST"])
@@ -304,7 +301,6 @@ def upload_excel():
                 "drawing_no": dr_no,
                 "line_no":    str(r.get("line_no", "")).strip(),
                 "system":     str(r.get("system", "")).strip(),
-                "area":       str(r.get("area", "")).strip(),
                 "bore":       str(r.get("bore", "")).strip(),
                 "title":      str(r.get("title", "")).strip(),
                 "revision":   str(r.get("revision", "")).strip(),
@@ -327,7 +323,7 @@ def export_excel():
     try:
         from concurrent.futures import ThreadPoolExecutor
         supabase = get_client()
-        cols = "area,system,drawing_no,line_no,title,revision,issued_date,bore"
+        cols = "system,drawing_no,line_no,title,revision,issued_date,bore"
         target = TABLE_LATEST if status == "" else TABLE_ALL
         count_res = supabase.table(target).select("id", count="exact").limit(1).execute()
         total = count_res.count if hasattr(count_res, "count") else 0
@@ -366,7 +362,6 @@ def print_drawings():
         from concurrent.futures import ThreadPoolExecutor
         supabase = get_client()
         search = request.args.get("search", "").strip()
-        area   = request.args.get("area",   "").strip()
         system = request.args.get("system", "").strip()
         status = request.args.get("status", "").strip()
         target = TABLE_LATEST if status == "" else TABLE_ALL
@@ -376,7 +371,6 @@ def print_drawings():
             if search:
                 s = search.replace(',', '\\,')
                 q = q.or_(f"drawing_no.ilike.%{s}%,line_no.ilike.%{s}%,title.ilike.%{s}%")
-            if area:   q = q.eq("area", area)
             if system: q = q.eq("system", system)
             if status: q = q.eq("revision", status)
             return q
@@ -386,7 +380,7 @@ def print_drawings():
         batch_size = 1000
 
         def fetch_batch(offset):
-            q = build_query(supabase.table(target).select("area,system,drawing_no,line_no,title,revision,issued_date"))
+            q = build_query(supabase.table(target).select("system,drawing_no,line_no,title,revision,issued_date"))
             return q.order("drawing_no").range(offset, offset + batch_size - 1).execute().data
 
         with ThreadPoolExecutor(max_workers=4) as ex:
@@ -399,8 +393,7 @@ def print_drawings():
         rows_html = ""
         for i, d in enumerate(all_data):
             rows_html += (
-                f"<tr><td>{i+1}</td><td>{esc(d.get('area'))}</td>"
-                f"<td>{esc(d.get('system'))}</td>"
+                f"<tr><td>{i+1}</td><td>{esc(d.get('system'))}</td>"
                 f"<td class='col-dwg'>{esc(d.get('drawing_no'))}</td>"
                 f"<td style='white-space:nowrap'>{esc(d.get('line_no'))}</td>"
                 f"<td style='white-space:normal;text-align:left'>{esc(d.get('title'))}</td>"
@@ -443,7 +436,7 @@ th {{ background-color: #f1f5f9; font-weight: 600; text-transform: uppercase; }}
   <div class="meta">Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</div>
   <table>
     <thead><tr>
-      <th style="width:35px">NO.</th><th>AREA</th><th>SYSTEM</th>
+      <th style="width:35px">NO.</th><th>SYSTEM</th>
       <th class="col-dwg">DWG. NO.</th><th style="white-space:nowrap">LINE. NO.</th>
       <th style="min-width:180px">DRAWING TITLE</th><th>REV.</th>
     </tr></thead>
@@ -515,7 +508,6 @@ def api_support_drawings():
 
         for d in res.data:
             d["size"] = _line_size(d.get("line_no"))
-            d["title"] = d.get("type", "")
             _sanitize_link(d)
 
         return jsonify({"total": res.count, "data": res.data})
@@ -544,6 +536,7 @@ def api_support_upload():
                 "type":            str(r.get("type", "")).strip(),
                 "iso_drawing":     str(r.get("iso drawing", "")).strip(),
                 "line_no":         str(r.get("line no", "")).strip(),
+                "clamp_height":    str(r.get("clamp height", "")).strip(),
                 "l1":              str(r.get("l1", "")).strip(),
                 "l2":              str(r.get("l2", "")).strip(),
                 "l3":              str(r.get("l3", "")).strip(),
@@ -570,7 +563,7 @@ def api_support_sync_links():
         master_data = []
         page_from, page_size = 0, 1000
         while True:
-            res = supabase.table(TABLE_SUPPORT).select("id,support_drawing,revision").range(
+            res = supabase.table(TABLE_SUPPORT).select("id,support_drawing,revision,type").range(
                 page_from, page_from + page_size - 1
             ).execute()
             if not res.data:
@@ -581,8 +574,8 @@ def api_support_sync_links():
             page_from += page_size
 
         uploaded = _fetch_cloudinary_all()
-        # 이중 하이픈 오타 파일명 처리용 정규화 딕셔너리 (1건 사용 중)
-        uploaded_norm = {k.replace('--', '-'): v for k, v in uploaded.items()}
+        uploaded_norm  = {k.replace('--', '-'): v for k, v in uploaded.items()}
+        uploaded_lower = {k.lower(): v for k, v in uploaded.items()}
 
         updates = []
         for row in master_data:
@@ -590,7 +583,11 @@ def api_support_sync_links():
             if not dwg or not rev:
                 continue
             safe = str(dwg).replace('"', '').replace('/', '_')
-            safe = re.sub(r'\s*\([^)]+\)\s*$', '', safe).strip()
+
+            drawing_type = str(row.get("type", "")).strip().upper()
+            if drawing_type != "SPECIAL":
+                safe = re.sub(r'\s*\([^)]+\)\s*$', '', safe).strip()
+
             rev_up = rev.upper()
             secure_url = None
             for fname in (f"{safe}_{rev_up}", f"{safe}-{rev_up}", safe):
@@ -605,6 +602,12 @@ def api_support_sync_links():
                     break
                 if f"{fname}.pdf" in uploaded_norm:
                     secure_url = uploaded_norm[f"{fname}.pdf"]
+                    break
+                if fname.lower() in uploaded_lower:
+                    secure_url = uploaded_lower[fname.lower()]
+                    break
+                if f"{fname}.pdf".lower() in uploaded_lower:
+                    secure_url = uploaded_lower[f"{fname}.pdf".lower()]
                     break
             if secure_url:
                 # secure_url이 .pdf 로 끝나지 않으면 추가

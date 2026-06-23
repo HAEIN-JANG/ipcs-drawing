@@ -9,6 +9,7 @@
   <link
     href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap"
     rel="stylesheet" />
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css" />
   <style>
     /* ─── CSS Variables ─────────────────────────── */
     :root {
@@ -558,6 +559,7 @@
     .col-sup-type { width: 100px; min-width: 100px; }
     .col-sup-iso { width: 180px; min-width: 180px; }
     .col-sup-line { width: 180px; min-width: 180px; }
+    .col-sup-ch { width: 70px; min-width: 60px; }
     .col-sup-lx { width: 40px; min-width: 35px; }
     .col-sup-rev { width: 60px; min-width: 60px; }
     .col-sup-date { width: 80px; min-width: 80px; }
@@ -1015,6 +1017,24 @@
     .btn-upload.ready:hover {
       background: var(--accent-hover);
     }
+
+    /* Sync Links 버튼 */
+    .btn-sync {
+      height: 34px;
+      padding: 0 14px;
+      border-radius: var(--radius);
+      font-size: 12px;
+      font-weight: 500;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      background: #0e7c45;
+      color: #fff;
+      transition: all .15s;
+      white-space: nowrap;
+    }
+    .btn-sync:hover { background: #0a6438; }
+    .btn-sync:disabled { opacity: .6; cursor: not-allowed; }
   </style>
 </head>
 
@@ -1096,9 +1116,6 @@
           <div class="actions">
             <button class="btn-sync" onclick="runSyncLinks()" id="btn-sync">
               <i class="fas fa-sync-alt"></i> Sync Links
-            </button>
-            <button class="btn-upload" onclick="openUploadModal()">
-              <i class="fas fa-file-upload"></i> Upload Excel
             </button>
           </div>
         </div>
@@ -1304,7 +1321,6 @@
       perPage: 20,
       filters: {
         search: '',
-        area: '',
         system: '',
         status: '',
         type: '',
@@ -1323,7 +1339,6 @@
       state.page = 1;
       // Reset filters on tab switch to avoid stale state
       state.filters.search = '';
-      state.filters.area = '';
       state.filters.system = '';
       state.filters.status = '';
       state.filters.type = '';
@@ -1568,7 +1583,6 @@
       showLoading(true);
       const params = new URLSearchParams({
         search: state.filters.search,
-        area: state.filters.area,
         system: state.filters.system,
         status: state.filters.status,
         size: state.filters.size,
@@ -1656,7 +1670,7 @@
         <td class="col-line">${esc(d.line_no) || '—'}</td>
         <td class="col-title">${esc(d.title) || '—'}</td>
         <td class="col-rev"><span class="rev-badge ${revC}">${esc(d.revision) || '—'}</span></td>
-        <td class="col-date">${esc((d.issued_date || '').substring(2, 10)) || '—'}</td>
+        <td class="col-date">${esc((d.issued_date || '').substring(0, 10)) || '—'}</td>
       </tr>
     `;
       });
@@ -1790,6 +1804,7 @@
                 <th class="col-sup-type">TYPE</th>
                 <th class="col-sup-iso">ISO DRAWING</th>
                 <th class="col-sup-line">LINE NO</th>
+                <th class="col-sup-ch">CLAMP H</th>
                 <th class="col-sup-lx">L1</th>
                 <th class="col-sup-lx">L2</th>
                 <th class="col-sup-lx">L3</th>
@@ -1817,12 +1832,13 @@
             <td class="col-sup-type">${esc(d.type || d.title) || '—'}</td>
             <td class="col-sup-iso">${esc(d.iso_drawing) || '—'}</td>
             <td class="col-sup-line">${esc(d.line_no) || '—'}</td>
+            <td class="col-sup-ch">${esc(d.clamp_height) || ''}</td>
             <td class="col-sup-lx">${esc(d.l1) || ''}</td>
             <td class="col-sup-lx">${esc(d.l2) || ''}</td>
             <td class="col-sup-lx">${esc(d.l3) || ''}</td>
             <td class="col-sup-lx">${esc(d.l4) || ''}</td>
             <td class="col-sup-rev">${esc(d.revision) || '—'}</td>
-            <td class="col-sup-date">${esc((d.issued_date || '').substring(2, 10)) || '—'}</td>
+            <td class="col-sup-date">${esc((d.issued_date || '').substring(0, 10)) || '—'}</td>
           </tr>
         `;
       });
@@ -2116,8 +2132,8 @@
     let selectedFile = null;
 
     const UPLOAD_COL_HINTS = {
-      iso:        'drawing_no / line_no / system / area / bore / title / revision / issued_date / file_link',
-      support:    'system / support drawing / type / iso drawing / line_no / l1 / l2 / l3 / l4 / revision / issue date',
+      iso:        'drawing_no / line_no / system / bore / title / revision / issued_date / file_link',
+      support:    'system / support drawing / type / iso drawing / line_no / clamp height / l1 / l2 / l3 / l4 / revision / issue date',
       valve:      'No / Valve / Drawing No / Title / Rev. / Date  (2행 헤더)',
       speciality: 'No / Drawing No / Title / Vendor / Class / Connection / Rev. / Date  (2행 헤더)',
       pid:        'No / System / Drawing No / Title / Rev. / Date  (2행 헤더)',
@@ -2268,7 +2284,6 @@
       toast('Exporting Excel (Filtered)...');
       const params = new URLSearchParams({
         search: state.filters.search || '',
-        area: state.filters.area || '',
         system: state.filters.system || '',
         status: state.filters.status || ''
       });
@@ -2279,7 +2294,6 @@
       toast('Preparing Print Report...');
       const params = new URLSearchParams({
         search: state.filters.search || '',
-        area: state.filters.area || '',
         system: state.filters.system || '',
         status: state.filters.status || ''
       });
@@ -2289,7 +2303,6 @@
     /* ─── Search Action ────────────────────────────── */
     function handleSearch() {
       state.filters.search = document.getElementById('search').value.trim();
-      state.filters.area = '';
       state.filters.system = document.getElementById('filter-system').value;
       state.filters.status = document.getElementById('filter-status').value;
       state.filters.type = document.getElementById('filter-type').value;
