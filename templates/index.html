@@ -1337,7 +1337,6 @@
 
       state.category = cat;
       state.page = 1;
-      // Reset filters on tab switch to avoid stale state
       state.filters.search = '';
       state.filters.system = '';
       state.filters.status = '';
@@ -1351,13 +1350,11 @@
       document.getElementById('filter-title').value = '';
       document.getElementById('filter-size').value = '';
 
-      // Update UI active state
       document.querySelectorAll('.nav-item').forEach(el => {
         const itemText = el.textContent.trim().toLowerCase();
         el.classList.toggle('active', itemText.startsWith(cat) || (cat === 'iso' && itemText.includes('iso')));
       });
 
-      // Update Title
       const titles = {
         iso: 'ISO DRAWING MASTER LIST',
         support: 'SUPPORT DRAWING MASTER LIST',
@@ -1367,7 +1364,6 @@
       };
       document.getElementById('current-category-title').textContent = titles[cat] || titles.iso;
 
-      // 탭별 필터 표시 제어
       const statusFilter = document.getElementById('filter-status');
       if (statusFilter) statusFilter.style.display = (cat === 'support') ? 'none' : '';
       const typeFilter = document.getElementById('filter-type');
@@ -1385,11 +1381,9 @@
       if (statC01Box)  statC01Box.style.display  = (cat === 'speciality' || cat === 'pid') ? 'none' : '';
       if (statC01aBox) statC01aBox.style.display = (cat === 'speciality' || cat === 'pid') ? 'none' : '';
 
-      // Sync Links 버튼은 Support, Valve, Speciality, PID 탭에서 표시
       const syncBtn = document.getElementById('btn-sync');
       if (syncBtn) syncBtn.style.display = (cat === 'support' || cat === 'valve' || cat === 'speciality' || cat === 'pid') ? '' : 'none';
 
-      // 탭별 헤더 통계 업데이트
       if (cat === 'support') {
         document.getElementById('stat-c01').textContent = '—';
         document.getElementById('stat-c01a').textContent = '—';
@@ -1474,7 +1468,6 @@
         }).catch(() => {});
       }
 
-      // Visibility
       if (cat === 'iso') {
         if (anchorTable) anchorTable.style.display = 'block';
         if (anchorPlace) anchorPlace.style.display = 'none';
@@ -1618,7 +1611,6 @@
 
     /* ─── Render table ──────────────────────────────── */
     function renderTable() {
-      // Only render if we are on the ISO tab
       if (state.category !== 'iso') return;
       const anchor = document.getElementById('table-anchor');
       const empty = document.getElementById('empty-state');
@@ -2255,8 +2247,7 @@
         ${(data.failed ?? 0) > 0 ? `<div style="margin-top:10px; color:var(--red); font-size:11px;">⚠️ ${data.failed}건의 오류가 발생했습니다.</div>` : ''}
       `;
 
-          // 통계 & 목록 갱신
-          const loadTask = state.category === 'support'    ? loadSupportDrawings()
+            const loadTask = state.category === 'support'    ? loadSupportDrawings()
                          : state.category === 'valve'       ? loadValveDrawings()
                          : state.category === 'speciality'  ? loadSpecialityDrawings()
                          : state.category === 'pid'         ? loadPidDrawings()
@@ -2346,7 +2337,6 @@
   <script>
     /* ─── Init ───────────────────────────────────────── */
     (async () => {
-      // /api/init: filters + stats + 첫 페이지 drawings 한 번에 로드
       try {
         showLoading(true);
         const res = await fetch('/api/init');
@@ -2365,7 +2355,6 @@
           updatePageInfo();
         }
 
-        // nav 활성화 (데이터 로드 없이 UI 상태만 설정)
         document.querySelectorAll('.nav-item').forEach(el => {
           el.classList.toggle('active', el.textContent.trim().toLowerCase().includes('iso'));
         });

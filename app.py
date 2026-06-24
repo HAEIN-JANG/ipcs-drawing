@@ -2,6 +2,7 @@
 import os
 import re
 import io
+import time as _time
 import pandas as pd
 from datetime import datetime
 from flask import Flask, render_template, request, jsonify, send_file, make_response
@@ -101,7 +102,6 @@ def get_client() -> Client:
     _supabase_client = create_client(SUPABASE_URL, SUPABASE_KEY, options=ClientOptions(schema="drawing"))
     return _supabase_client
 
-import time as _time
 _stats_cache = None
 _stats_cache_ts = 0
 STATS_CACHE_TTL = 60
@@ -139,7 +139,6 @@ def _sanitize_link(d: dict, key: str = "file_link"):
         d[key] = None
 
 def _configure_cloudinary():
-    """CLOUDINARY_URL 환경변수에서 cloudinary 설정 — 파싱 실패 시 ValueError"""
     import cloudinary
     import cloudinary.api
     cld_url = os.environ.get("CLOUDINARY_URL", "")
@@ -150,11 +149,10 @@ def _configure_cloudinary():
     cloudinary.config(api_key=m.group(1), api_secret=m.group(2), cloud_name=cloud_name)
     return cloud_name
 
-def _fetch_cloudinary_all(resource_type="image"):
-    """Cloudinary 전체 파일 목록을 수집 (5분 캐시)"""
+def _fetch_cloudinary_all(resource_type="image", force=False):
     global _cld_cache, _cld_cache_ts
     import cloudinary.api
-    if _cld_cache and (_time.time() - _cld_cache_ts) < CLD_CACHE_TTL:
+    if not force and _cld_cache and (_time.time() - _cld_cache_ts) < CLD_CACHE_TTL:
         return _cld_cache
     uploaded = {}
     next_cursor = None
@@ -242,7 +240,6 @@ def get_stats():
 
 @app.route("/api/init")
 def api_init():
-    """filters + stats + 첫 페이지 drawings를 단일 요청으로 반환 (초기 로딩 최적화)"""
     global _stats_cache, _stats_cache_ts
     try:
         supabase = get_client()
@@ -573,7 +570,7 @@ def api_support_sync_links():
                 break
             page_from += page_size
 
-        uploaded = _fetch_cloudinary_all()
+        uploaded = _fetch_cloudinary_all(force=True)
         uploaded_norm  = {k.replace('--', '-'): v for k, v in uploaded.items()}
         uploaded_lower = {k.lower(): v for k, v in uploaded.items()}
 
@@ -610,7 +607,6 @@ def api_support_sync_links():
                     secure_url = uploaded_lower[f"{fname}.pdf".lower()]
                     break
             if secure_url:
-                # secure_url이 .pdf 로 끝나지 않으면 추가
                 url = secure_url if secure_url.lower().endswith(".pdf") else secure_url + ".pdf"
                 updates.append({"id": row["id"], "support_drawing": dwg, "revision": rev, "file_link": url})
 
@@ -717,7 +713,6 @@ def api_pid_sync_links():
     try:
         _configure_cloudinary()
         supabase = get_client()
-        supabase.table(TABLE_PID).update({"file_link": None}).neq("id", 0).execute()
 
         master_data, page_from, page_size = [], 0, 1000
         while True:
@@ -732,7 +727,7 @@ def api_pid_sync_links():
             page_from += page_size
 
         pid_nos  = {row["drawing_no"].lower() for row in master_data if row.get("drawing_no")}
-        all_cld  = _fetch_cloudinary_all()
+        all_cld  = _fetch_cloudinary_all(force=True)
         uploaded = {k.lower(): v for k, v in all_cld.items() if k.lower() in pid_nos}
 
         updates = []
@@ -745,6 +740,7 @@ def api_pid_sync_links():
                 link = url if url.lower().endswith(".pdf") else url + ".pdf"
                 updates.append({"id": row["id"], "drawing_no": dwg, "file_link": link})
 
+        supabase.table(TABLE_PID).update({"file_link": None}).neq("id", 0).execute()
         for i in range(0, len(updates), 500):
             supabase.table(TABLE_PID).upsert(updates[i:i+500], on_conflict="drawing_no").execute()
 
@@ -847,7 +843,6 @@ def api_valve_sync_links():
     try:
         _configure_cloudinary()
         supabase = get_client()
-        supabase.table(TABLE_VALVE).update({"file_link": None}).neq("id", 0).execute()
 
         master_data, page_from, page_size = [], 0, 1000
         while True:
@@ -861,7 +856,7 @@ def api_valve_sync_links():
                 break
             page_from += page_size
 
-        all_cld  = _fetch_cloudinary_all()
+        all_cld  = _fetch_cloudinary_all(force=True)
         dwg_nos  = {row["drawing_no"].lower() for row in master_data if row.get("drawing_no")}
         uploaded = {k.lower(): v for k, v in all_cld.items() if k.lower() in dwg_nos}
 
@@ -875,6 +870,7 @@ def api_valve_sync_links():
                 link = url if url.lower().endswith(".pdf") else url + ".pdf"
                 updates.append({"id": row["id"], "drawing_no": dwg, "file_link": link})
 
+        supabase.table(TABLE_VALVE).update({"file_link": None}).neq("id", 0).execute()
         for i in range(0, len(updates), 500):
             supabase.table(TABLE_VALVE).upsert(updates[i:i+500], on_conflict="drawing_no").execute()
 
@@ -979,7 +975,6 @@ def api_speciality_sync_links():
     try:
         _configure_cloudinary()
         supabase = get_client()
-        supabase.table(TABLE_SPECIALITY).update({"file_link": None}).neq("id", 0).execute()
 
         master_data, page_from, page_size = [], 0, 1000
         while True:
@@ -993,7 +988,7 @@ def api_speciality_sync_links():
                 break
             page_from += page_size
 
-        all_cld  = _fetch_cloudinary_all()
+        all_cld  = _fetch_cloudinary_all(force=True)
         dwg_nos  = {row["drawing_no"].lower() for row in master_data if row.get("drawing_no")}
         uploaded = {k.lower(): v for k, v in all_cld.items() if k.lower() in dwg_nos}
 
@@ -1007,6 +1002,7 @@ def api_speciality_sync_links():
                 link = url if url.lower().endswith(".pdf") else url + ".pdf"
                 updates.append({"id": row["id"], "drawing_no": dwg, "file_link": link})
 
+        supabase.table(TABLE_SPECIALITY).update({"file_link": None}).neq("id", 0).execute()
         for i in range(0, len(updates), 500):
             supabase.table(TABLE_SPECIALITY).upsert(updates[i:i+500], on_conflict="drawing_no").execute()
 
