@@ -1382,7 +1382,7 @@
       if (statC01aBox) statC01aBox.style.display = (cat === 'speciality' || cat === 'pid') ? 'none' : '';
 
       const syncBtn = document.getElementById('btn-sync');
-      if (syncBtn) syncBtn.style.display = (cat === 'support' || cat === 'valve' || cat === 'speciality' || cat === 'pid') ? '' : 'none';
+      if (syncBtn) syncBtn.style.display = '';
 
       if (cat === 'support') {
         document.getElementById('stat-c01').textContent = '—';
@@ -1394,7 +1394,7 @@
           if (d.systems) {
             const el = document.getElementById('filter-system');
             el.innerHTML = '<option value="">ALL SYSTEM</option>' +
-              d.systems.filter(v => v !== 'ALL').map(v => `<option value="${v}">${v}</option>`).join('');
+              d.systems.map(v => `<option value="${v}">${v}</option>`).join('');
           }
           if (d.types) {
             const el = document.getElementById('filter-type');
@@ -2095,6 +2095,7 @@
         const endpoint = state.category === 'support'    ? '/api/support/sync-links'
                        : state.category === 'speciality' ? '/api/speciality/sync-links'
                        : state.category === 'pid'        ? '/api/pid/sync-links'
+                       : state.category === 'iso'        ? '/api/drawings/sync-links'
                        : '/api/valve/sync-links';
         const res = await fetch(endpoint, { method: 'POST' });
         const data = await res.json();
@@ -2110,6 +2111,8 @@
           loadSpecialityDrawings();
         } else if (state.category === 'pid') {
           loadPidDrawings();
+        } else if (state.category === 'iso') {
+          loadDrawings();
         }
       } catch (err) {
         console.error(err);
@@ -2360,7 +2363,7 @@
         });
         document.getElementById('current-category-title').textContent = 'ISO DRAWING MASTER LIST';
         const syncBtn = document.getElementById('btn-sync');
-        if (syncBtn) syncBtn.style.display = 'none';
+        if (syncBtn) syncBtn.style.display = '';
         const sizeFilterEl = document.getElementById('filter-size');
         if (sizeFilterEl) sizeFilterEl.style.display = '';
       } catch (e) {

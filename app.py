@@ -232,8 +232,15 @@ def _get_iso_stats(supabase):
 
 @app.route("/api/stats")
 def get_stats():
+    global _stats_cache, _stats_cache_ts
     try:
-        return jsonify(_get_iso_stats(get_client()))
+        supabase = get_client()
+        if _stats_cache and (_time.time() - _stats_cache_ts) < STATS_CACHE_TTL:
+            return jsonify(_stats_cache)
+        stats = _get_iso_stats(supabase)
+        _stats_cache = stats
+        _stats_cache_ts = _time.time()
+        return jsonify(stats)
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
@@ -293,22 +300,101 @@ def upload_excel():
             dr_no = str(r.get("drawing_no", r.get("drawing_n", ""))).strip()
             if not dr_no:
                 continue
-            f_link = get_cloudinary_url(str(r.get("file_link", "")).strip()) or ""
+            f_link = get_cloudinary_url(str(r.get("file_link", "")).strip()) or None
+            issued = str(r.get("issued_date", "")).strip() or None
             batch.append({
-                "drawing_no": dr_no,
-                "line_no":    str(r.get("line_no", "")).strip(),
-                "system":     str(r.get("system", "")).strip(),
-                "bore":       str(r.get("bore", "")).strip(),
-                "title":      str(r.get("title", "")).strip(),
-                "revision":   str(r.get("revision", "")).strip(),
-                "file_link":  f_link,
+                "drawing_no":  dr_no,
+                "line_no":     str(r.get("line_no", "")).strip(),
+                "system":      str(r.get("system", "")).strip(),
+                "bore":        str(r.get("bore", "")).strip(),
+                "title":       str(r.get("title", "")).strip(),
+                "revision":    str(r.get("revision", "")).strip(),
+                "issued_date": issued,
+                "file_link":   f_link,
             })
+
+        # id 컬럼에 DEFAULT 없음 → 기존 id 매핑 후 신규 레코드에 순번 부여
+        existing = {}
+        page_from, page_size = 0, 1000
+        while True:
+            res = supabase.table(TABLE_ALL).select("id,drawing_no,revision").range(
+                page_from, page_from + page_size - 1
+            ).execute()
+            if not res.data:
+                break
+            for row in res.data:
+                existing[(row["drawing_no"], row["revision"])] = row["id"]
+            if len(res.data) < page_size:
+                break
+            page_from += page_size
+
+        max_id = max(existing.values()) if existing else 0
+        new_counter = 0
+        for r in batch:
+            key = (r["drawing_no"], r["revision"])
+            if key in existing:
+                r["id"] = existing[key]
+            else:
+                new_counter += 1
+                r["id"] = max_id + new_counter
+
         inserted = 0
         for i in range(0, len(batch), 1000):
             supabase.table(TABLE_ALL).upsert(batch[i:i+1000], on_conflict="drawing_no,revision").execute()
             inserted += len(batch[i:i+1000])
         _invalidate_stats_cache()
         return jsonify({"success": True, "inserted": inserted, "processed": len(batch)})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/drawings/sync-links", methods=["POST"])
+def api_drawings_sync_links():
+    try:
+        _configure_cloudinary()
+        supabase = get_client()
+
+        master_data, page_from, page_size = [], 0, 1000
+        while True:
+            res = supabase.table(TABLE_ALL).select("id,drawing_no,revision").range(
+                page_from, page_from + page_size - 1
+            ).execute()
+            if not res.data:
+                break
+            master_data.extend(res.data)
+            if len(res.data) < page_size:
+                break
+            page_from += page_size
+
+        uploaded = _fetch_cloudinary_all(force=True)
+        uploaded_norm  = {k.replace('--', '-'): v for k, v in uploaded.items()}
+        uploaded_lower = {k.lower(): v for k, v in uploaded.items()}
+
+        updates = []
+        for row in master_data:
+            dwg, rev = row.get("drawing_no"), row.get("revision")
+            if not dwg or not rev:
+                continue
+            safe  = str(dwg).strip()
+            rev_up = rev.upper()
+            secure_url = None
+            for fname in (f"{safe}_{rev_up}", f"{safe}-{rev_up}", safe):
+                if fname in uploaded:
+                    secure_url = uploaded[fname]; break
+                if fname in uploaded_norm:
+                    secure_url = uploaded_norm[fname]; break
+                if fname.lower() in uploaded_lower:
+                    secure_url = uploaded_lower[fname.lower()]; break
+            if secure_url:
+                url = secure_url if secure_url.lower().endswith(".pdf") else secure_url + ".pdf"
+                updates.append({"id": row["id"], "drawing_no": dwg, "revision": rev, "file_link": url})
+
+        supabase.table(TABLE_ALL).update({"file_link": None}).neq("id", 0).execute()
+        for i in range(0, len(updates), 500):
+            supabase.table(TABLE_ALL).upsert(updates[i:i+500], on_conflict="drawing_no,revision").execute()
+
+        return jsonify({"success": True, "synced": len(updates),
+                        "message": f"실제 업로드된 {len(updates)}개의 도면만 링크를 연결했습니다."})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
@@ -470,7 +556,7 @@ def api_support_stats():
 @app.route("/api/support/filters")
 def api_support_filters():
     return jsonify({
-        "systems":   ["ALL"] + SYSTEMS,
+        "systems":   SYSTEMS,
         "types":     ["TYPICAL", "SPECIAL", "G", "GS", "U", "US", "W", "WS"],
         "revisions": ["C01", "C01A", "C01B"],
     })
@@ -539,8 +625,8 @@ def api_support_upload():
                 "l3":              str(r.get("l3", "")).strip(),
                 "l4":              str(r.get("l4", "")).strip(),
                 "revision":        str(r.get("revision", "")).strip(),
-                "issued_date":     str(r.get("issue date", "")).strip(),
-                "file_link":       "",
+                "issued_date":     str(r.get("issue date", "")).strip() or None,
+                "file_link":       None,
             })
         inserted = 0
         for i in range(0, len(batch), 500):
@@ -697,7 +783,7 @@ def api_pid_upload():
                 "title":       str(r.get("Title", "")).strip(),
                 "revision":    str(r.get("Rev.", "")).strip(),
                 "issued_date": date_val,
-                "file_link":   "",
+                "file_link":   None,
             })
         inserted = 0
         for i in range(0, len(batch), 500):
@@ -827,7 +913,7 @@ def api_valve_upload():
                 "title":       str(r.get("Title", "")).strip(),
                 "revision":    str(r.get("Rev.", r.get("Revision", ""))).strip(),
                 "issued_date": date_val,
-                "file_link":   "",
+                "file_link":   None,
             })
         inserted = 0
         for i in range(0, len(batch), 500):
@@ -959,7 +1045,7 @@ def api_speciality_upload():
                 "connection":  str(r.get("Connection", "")).strip(),
                 "revision":    str(r.get("Rev.", r.get("Revision", ""))).strip(),
                 "issued_date": date_val,
-                "file_link":   "",
+                "file_link":   None,
             })
         inserted = 0
         for i in range(0, len(batch), 500):
