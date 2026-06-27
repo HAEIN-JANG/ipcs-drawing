@@ -5,6 +5,7 @@ import io
 import time as _time
 import pandas as pd
 from datetime import datetime
+from concurrent.futures import ThreadPoolExecutor
 from flask import Flask, render_template, request, jsonify, send_file, make_response
 from supabase import create_client, Client, ClientOptions
 
@@ -215,7 +216,6 @@ def get_drawings():
 
 
 def _get_iso_stats(supabase):
-    from concurrent.futures import ThreadPoolExecutor
     def q_total(): return supabase.table(TABLE_ALL).select("id", count="exact").limit(1).execute()
     def q_c01():   return supabase.table(TABLE_ALL).select("id", count="exact").eq("revision", "C01").limit(1).execute()
     def q_c01a():  return supabase.table(TABLE_ALL).select("id", count="exact").eq("revision", "C01A").limit(1).execute()
@@ -265,7 +265,6 @@ def api_init():
             dwg_res = q_drawings()
             stats = _stats_cache
         else:
-            from concurrent.futures import ThreadPoolExecutor
             with ThreadPoolExecutor(max_workers=2) as ex:
                 f_dwg   = ex.submit(q_drawings)
                 f_stats = ex.submit(_get_iso_stats, supabase)
@@ -403,23 +402,28 @@ def api_drawings_sync_links():
 def export_excel():
     search = request.args.get("search", "").strip()
     status = request.args.get("status", "")
+    size   = request.args.get("size", "")
     try:
-        from concurrent.futures import ThreadPoolExecutor
         supabase = get_client()
         cols = "system,drawing_no,line_no,title,revision,issued_date,bore"
         target = TABLE_LATEST if status == "" else TABLE_ALL
-        count_res = supabase.table(target).select("id", count="exact").limit(1).execute()
-        total = count_res.count if hasattr(count_res, "count") else 0
         page_size = 1000
 
-        def fetch_batch(offset):
-            q = supabase.table(target).select(cols)
+        def _base_query(select_cols, count=False):
+            kw = {"count": "exact"} if count else {}
+            q = supabase.table(target).select(select_cols, **kw)
             if search:
                 s = search.replace(',', '\\,')
                 q = q.or_(f"drawing_no.ilike.%{s}%,line_no.ilike.%{s}%,title.ilike.%{s}%")
-            if status:
-                q = q.eq("revision", status)
-            return q.order("drawing_no").range(offset, offset + page_size - 1).execute().data
+            if status: q = q.eq("revision", status)
+            if size:   q = _apply_size_filter(q, size)
+            return q
+
+        count_res = _base_query("id", count=True).limit(1).execute()
+        total = count_res.count or 0
+
+        def fetch_batch(offset):
+            return _base_query(cols).order("drawing_no").range(offset, offset + page_size - 1).execute().data
 
         with ThreadPoolExecutor(max_workers=4) as ex:
             results = list(ex.map(fetch_batch, range(0, total, page_size)))
@@ -442,7 +446,6 @@ def export_excel():
 @app.route("/api/print")
 def print_drawings():
     try:
-        from concurrent.futures import ThreadPoolExecutor
         supabase = get_client()
         search = request.args.get("search", "").strip()
         system = request.args.get("system", "").strip()
@@ -605,27 +608,35 @@ def api_support_upload():
         if not file:
             return jsonify({"error": "No file shared"}), 400
         df = pd.read_excel(io.BytesIO(file.read()), sheet_name=0)
-        df.columns = [str(c).lower().strip() for c in df.columns]
+        df.columns = [str(c).lower().strip().replace('\n', ' ') for c in df.columns]
         df = df.fillna("")
         supabase = get_client()
         batch = []
         for r in df.to_dict("records"):
-            sup_dwg = str(r.get("support drawing", "")).strip()
+            # 신 포맷(support tag no.)과 구 포맷(support drawing) 모두 지원
+            sup_dwg = str(r.get("support tag no.", r.get("support drawing", ""))).strip()
             if not sup_dwg:
                 continue
+            revision = str(r.get("latest", r.get("revision", ""))).strip()
+            raw_date = r.get("issue date", "")
+            if hasattr(raw_date, "strftime"):
+                issued = raw_date.strftime("%Y-%m-%d")
+            else:
+                issued = str(raw_date).strip().split(" ")[0] if raw_date else None
+            issued = issued or None
             batch.append({
                 "system":          str(r.get("system", "")).strip(),
                 "support_drawing": sup_dwg,
                 "type":            str(r.get("type", "")).strip(),
-                "iso_drawing":     str(r.get("iso drawing", "")).strip(),
-                "line_no":         str(r.get("line no", "")).strip(),
-                "clamp_height":    str(r.get("clamp height", "")).strip(),
-                "l1":              str(r.get("l1", "")).strip(),
-                "l2":              str(r.get("l2", "")).strip(),
-                "l3":              str(r.get("l3", "")).strip(),
-                "l4":              str(r.get("l4", "")).strip(),
-                "revision":        str(r.get("revision", "")).strip(),
-                "issued_date":     str(r.get("issue date", "")).strip() or None,
+                "iso_drawing":     str(r.get("iso drawing no.", r.get("iso drawing", ""))).strip(),
+                "line_no":         str(r.get("line no.", r.get("line no", ""))).strip(),
+                "clamp_height":    str(r.get("shoe  height", r.get("clamp height", ""))).strip() or None,
+                "l1":              str(r.get("l1", "")).strip() or None,
+                "l2":              str(r.get("l2", "")).strip() or None,
+                "l3":              str(r.get("l3", "")).strip() or None,
+                "l4":              str(r.get("l4", "")).strip() or None,
+                "revision":        revision,
+                "issued_date":     issued,
                 "file_link":       None,
             })
         inserted = 0
@@ -737,7 +748,7 @@ def api_pid_drawings():
         system   = request.args.get("system", "")
         revision = request.args.get("revision", "")
         page     = _safe_int(request.args.get("page", 1), 1)
-        per_page = _safe_int(request.args.get("per_page", 50), 20)
+        per_page = _safe_int(request.args.get("per_page", 20), 20)
         offset   = (page - 1) * per_page
 
         supabase = get_client()

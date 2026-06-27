@@ -52,6 +52,8 @@
       color: var(--text);
       font-size: 13px;
       line-height: 1.5;
+      height: 100vh;
+      overflow: hidden;
     }
 
     a {
@@ -73,7 +75,8 @@
     /* ─── Layout ─────────────────────────────────── */
     .app-container {
       display: flex;
-      min-height: 100vh;
+      height: 100vh;
+      overflow: hidden;
     }
 
     /* ─── Sidebar ────────────────────────────────── */
@@ -173,6 +176,8 @@
       flex-direction: column;
       background: var(--bg);
       min-width: 0;
+      height: 100vh;
+      overflow: hidden;
     }
 
     /* ─── Top Header ─────────────────────────────── */
@@ -183,10 +188,9 @@
       align-items: center;
       padding: 0 24px;
       gap: 16px;
-      position: sticky;
-      top: 0;
       z-index: 100;
       border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
     }
 
     .header-title {
@@ -249,6 +253,7 @@
       align-items: center;
       gap: 8px;
       flex-wrap: wrap;
+      flex-shrink: 0;
     }
 
     .search-wrap {
@@ -373,6 +378,7 @@
       justify-content: space-between;
       background: var(--surface);
       border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
     }
 
     .results-text {
@@ -392,7 +398,19 @@
 
     /* ─── Main content ───────────────────────────── */
     .main {
-      padding: 16px 24px 10px;
+      flex: 1;
+      min-height: 0;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      padding: 12px 24px 0;
+    }
+
+    #table-anchor {
+      flex: 1;
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
     }
 
     /* ─── Group header ───────────────────────────── */
@@ -459,7 +477,8 @@
     .table-container {
       overflow-x: auto;
       overflow-y: auto;
-      max-height: 80vh;
+      flex: 1;
+      min-height: 0;
       border: 1px solid var(--border);
       border-radius: 8px;
       background: white;
@@ -701,7 +720,8 @@
       align-items: center;
       justify-content: center;
       gap: 6px;
-      margin-top: 12px;
+      flex-shrink: 0;
+      padding: 8px 0 12px;
     }
 
     .page-btn {
@@ -1469,23 +1489,23 @@
       }
 
       if (cat === 'iso') {
-        if (anchorTable) anchorTable.style.display = 'block';
+        if (anchorTable) anchorTable.style.display = '';
         if (anchorPlace) anchorPlace.style.display = 'none';
         loadDrawings();
       } else if (cat === 'support') {
-        if (anchorTable) anchorTable.style.display = 'block';
+        if (anchorTable) anchorTable.style.display = '';
         if (anchorPlace) anchorPlace.style.display = 'none';
         loadSupportDrawings();
       } else if (cat === 'valve') {
-        if (anchorTable) anchorTable.style.display = 'block';
+        if (anchorTable) anchorTable.style.display = '';
         if (anchorPlace) anchorPlace.style.display = 'none';
         loadValveDrawings();
       } else if (cat === 'speciality') {
-        if (anchorTable) anchorTable.style.display = 'block';
+        if (anchorTable) anchorTable.style.display = '';
         if (anchorPlace) anchorPlace.style.display = 'none';
         loadSpecialityDrawings();
       } else if (cat === 'pid') {
-        if (anchorTable) anchorTable.style.display = 'block';
+        if (anchorTable) anchorTable.style.display = '';
         if (anchorPlace) anchorPlace.style.display = 'none';
         loadPidDrawings();
       } else {
