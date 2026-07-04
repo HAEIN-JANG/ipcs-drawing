@@ -189,6 +189,7 @@ def get_drawings():
         system   = request.args.get("system", "")
         status   = request.args.get("status", "")
         size     = request.args.get("size", "")
+        remark   = request.args.get("remark", "")
         page     = _safe_int(request.args.get("page", 1), 1)
         per_page = _safe_int(request.args.get("per_page", 20), 20)
         offset   = (page - 1) * per_page
@@ -203,6 +204,7 @@ def get_drawings():
         if system: query = query.eq("system", system)
         if status: query = query.eq("revision", status)
         if size:   query = _apply_size_filter(query, size)
+        if remark: query = query.eq("remark", remark)
 
         res = query.order("drawing_no").range(offset, offset + per_page - 1).execute()
         for row in res.data:
@@ -245,13 +247,33 @@ def get_stats():
         return jsonify({"error": str(e)}), 500
 
 
+def _get_distinct_remarks(table):
+    supabase = get_client()
+    remarks, page_from, page_size = set(), 0, 1000
+    while True:
+        res = supabase.table(table).select("remark").not_.is_("remark", "null").range(
+            page_from, page_from + page_size - 1
+        ).execute()
+        if not res.data:
+            break
+        remarks.update(row["remark"] for row in res.data if row.get("remark"))
+        if len(res.data) < page_size:
+            break
+        page_from += page_size
+    return sorted(remarks)
+
+
 @app.route("/api/init")
 def api_init():
     global _stats_cache, _stats_cache_ts
     try:
         supabase = get_client()
-        FILTERS = {"systems": SYSTEMS, "statuses": REVISIONS}
-        DWG_COLS = "system,drawing_no,line_no,title,revision,issued_date,file_link"
+        try:
+            remarks = _get_distinct_remarks(TABLE_ALL)
+        except Exception:
+            remarks = []
+        FILTERS = {"systems": SYSTEMS, "statuses": REVISIONS, "remarks": remarks}
+        DWG_COLS = "system,drawing_no,line_no,title,revision,issued_date,file_link,remark"
 
         def q_drawings():
             res = supabase.table(TABLE_LATEST).select(DWG_COLS, count="exact").order("drawing_no").range(0, 19).execute()
@@ -281,7 +303,11 @@ def api_init():
 
 @app.route("/api/filters")
 def get_filters():
-    return jsonify({"systems": SYSTEMS, "statuses": REVISIONS})
+    try:
+        remarks = _get_distinct_remarks(TABLE_ALL)
+    except Exception:
+        remarks = []
+    return jsonify({"systems": SYSTEMS, "statuses": REVISIONS, "remarks": remarks})
 
 
 @app.route("/api/upload", methods=["POST"])
@@ -558,10 +584,15 @@ def api_support_stats():
 
 @app.route("/api/support/filters")
 def api_support_filters():
+    try:
+        remarks = _get_distinct_remarks(TABLE_SUPPORT)
+    except Exception:
+        remarks = []
     return jsonify({
         "systems":   SYSTEMS,
         "types":     ["TYPICAL", "SPECIAL", "G", "GS", "U", "US", "W", "WS"],
         "revisions": ["C01", "C01A", "C01B"],
+        "remarks":   remarks,
     })
 
 
@@ -572,6 +603,7 @@ def api_support_drawings():
         system      = request.args.get("system", "")
         type_filter = request.args.get("type", "")
         size        = request.args.get("size", "")
+        remark      = request.args.get("remark", "")
         page        = _safe_int(request.args.get("page", 1), 1)
         per_page    = _safe_int(request.args.get("per_page", 20), 20)
         offset      = (page - 1) * per_page
@@ -589,6 +621,7 @@ def api_support_drawings():
             else:
                 query = query.eq("type", type_filter)
         if size: query = _apply_size_filter(query, size)
+        if remark: query = query.eq("remark", remark)
 
         res = query.order("system").order("support_drawing").range(offset, offset + per_page - 1).execute()
 

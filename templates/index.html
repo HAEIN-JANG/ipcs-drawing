@@ -565,6 +565,11 @@
       min-width: 120px;
     }
 
+    .col-remark {
+      width: 140px;
+      min-width: 140px;
+    }
+
     /* Size Badge */
     .size-badge { display: inline-block; font-size: 10px; font-weight: 600; padding: 2px 7px; border-radius: 4px; letter-spacing: .3px; }
     .size-small { background: #e0f2fe; color: #0c4a6e; }
@@ -582,6 +587,7 @@
     .col-sup-lx { width: 40px; min-width: 35px; }
     .col-sup-rev { width: 60px; min-width: 60px; }
     .col-sup-date { width: 80px; min-width: 80px; }
+    .col-sup-remark { width: 140px; min-width: 140px; }
 
     /* Speciality Specific Columns */
     .col-spc-no     { width: 40px;  min-width: 40px; text-align: center; }
@@ -1177,6 +1183,10 @@
       <option value="">ALL TITLE</option>
     </select>
 
+    <select class="filter-select" id="filter-remark" style="display:none">
+      <option value="">ALL REMARK</option>
+    </select>
+
     <button class="btn btn-primary" onclick="handleSearch()">
       <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
         <circle cx="11" cy="11" r="8" />
@@ -1363,12 +1373,14 @@
       state.filters.type = '';
       state.filters.title = '';
       state.filters.size = '';
+      state.filters.remark = '';
       document.getElementById('search').value = '';
       document.getElementById('filter-system').value = '';
       document.getElementById('filter-status').value = '';
       document.getElementById('filter-type').value = '';
       document.getElementById('filter-title').value = '';
       document.getElementById('filter-size').value = '';
+      document.getElementById('filter-remark').value = '';
 
       document.querySelectorAll('.nav-item').forEach(el => {
         const itemText = el.textContent.trim().toLowerCase();
@@ -1394,6 +1406,8 @@
       if (systemFilter) systemFilter.style.display = (cat === 'valve' || cat === 'speciality') ? 'none' : '';
       const sizeFilter = document.getElementById('filter-size');
       if (sizeFilter) sizeFilter.style.display = (cat === 'iso' || cat === 'support') ? '' : 'none';
+      const remarkFilter = document.getElementById('filter-remark');
+      if (remarkFilter) remarkFilter.style.display = (cat === 'iso' || cat === 'support') ? '' : 'none';
 
       // C01/C01A 통계 박스: Speciality/PID에서는 해당 없으므로 숨김
       const statC01Box  = document.getElementById('stat-c01')?.closest('.hstat');
@@ -1421,6 +1435,11 @@
             el.innerHTML = '<option value="">ALL TYPE</option>' +
               d.types.map(v => `<option value="${v}">${v}</option>`).join('');
           }
+          if (d.remarks) {
+            const el = document.getElementById('filter-remark');
+            el.innerHTML = '<option value="">ALL REMARK</option>' +
+              d.remarks.map(v => `<option value="${v}">${v}</option>`).join('');
+          }
         }).catch(() => {});
       } else if (cat === 'iso') {
         loadStats();
@@ -1434,6 +1453,11 @@
             const el = document.getElementById('filter-status');
             el.innerHTML = '<option value="">ALL STATUS</option>' +
               d.statuses.map(v => `<option value="${v}">${v}</option>`).join('');
+          }
+          if (d.remarks) {
+            const el = document.getElementById('filter-remark');
+            el.innerHTML = '<option value="">ALL REMARK</option>' +
+              d.remarks.map(v => `<option value="${v}">${v}</option>`).join('');
           }
         }).catch(() => {});
       } else if (cat === 'valve') {
@@ -1582,6 +1606,7 @@
       if (data.systems) populate('filter-system', data.systems, 'SYSTEM');
       if (data.statuses) populate('filter-status', data.statuses, 'STATUS');
       if (data.types) populate('filter-type', data.types, 'TYPE');
+      if (data.remarks) populate('filter-remark', data.remarks, 'REMARK');
     }
 
     async function loadFilters() {
@@ -1599,6 +1624,7 @@
         system: state.filters.system,
         status: state.filters.status,
         size: state.filters.size,
+        remark: state.filters.remark || '',
         page: state.page,
         per_page: state.perPage
       });
@@ -1657,6 +1683,7 @@
             <th class="col-title">DRAWING TITLE</th>
             <th class="col-rev">REV.</th>
             <th class="col-date">ISSUE DATE</th>
+            <th class="col-remark">REMARK</th>
           </tr>
         </thead>
         <tbody>
@@ -1683,6 +1710,7 @@
         <td class="col-title">${esc(d.title) || '—'}</td>
         <td class="col-rev"><span class="rev-badge ${revC}">${esc(d.revision) || '—'}</span></td>
         <td class="col-date">${esc((d.issued_date || '').substring(0, 10)) || '—'}</td>
+        <td class="col-remark">${esc(d.remark) || ''}</td>
       </tr>
     `;
       });
@@ -1766,6 +1794,7 @@
           system: state.filters.system,
           type: state.filters.type || '',
           size: state.filters.size || '',
+          remark: state.filters.remark || '',
           page: state.page,
           per_page: state.perPage
         });
@@ -1823,6 +1852,7 @@
                 <th class="col-sup-lx">L4</th>
                 <th class="col-sup-rev">REV.</th>
                 <th class="col-sup-date">DATE</th>
+                <th class="col-sup-remark">REMARK</th>
               </tr>
             </thead>
             <tbody>
@@ -1851,6 +1881,7 @@
             <td class="col-sup-lx">${esc(d.l4) || ''}</td>
             <td class="col-sup-rev">${esc(d.revision) || '—'}</td>
             <td class="col-sup-date">${esc((d.issued_date || '').substring(0, 10)) || '—'}</td>
+            <td class="col-sup-remark">${esc(d.remark) || ''}</td>
           </tr>
         `;
       });
@@ -2322,6 +2353,7 @@
       state.filters.type = document.getElementById('filter-type').value;
       state.filters.title = document.getElementById('filter-title').value;
       state.filters.size = document.getElementById('filter-size').value;
+      state.filters.remark = document.getElementById('filter-remark').value;
       state.page = 1;
       
       if (state.category === 'support') {
@@ -2342,13 +2374,14 @@
       if (e.key === 'Enter') handleSearch();
     });
 
-    ['filter-system', 'filter-size', 'filter-status', 'filter-type', 'filter-title'].forEach(id => {
+    ['filter-system', 'filter-size', 'filter-status', 'filter-type', 'filter-title', 'filter-remark'].forEach(id => {
       document.getElementById(id).addEventListener('change', e => {
         if (id === 'filter-system') state.filters.system = e.target.value;
         if (id === 'filter-size')   state.filters.size   = e.target.value;
         if (id === 'filter-status') state.filters.status = e.target.value;
         if (id === 'filter-type')   state.filters.type   = e.target.value;
         if (id === 'filter-title')  state.filters.title  = e.target.value;
+        if (id === 'filter-remark') state.filters.remark = e.target.value;
         handleSearch();
       });
     });
@@ -2386,6 +2419,8 @@
         if (syncBtn) syncBtn.style.display = '';
         const sizeFilterEl = document.getElementById('filter-size');
         if (sizeFilterEl) sizeFilterEl.style.display = '';
+        const remarkFilterEl = document.getElementById('filter-remark');
+        if (remarkFilterEl) remarkFilterEl.style.display = '';
       } catch (e) {
         console.error('Init failed, falling back:', e);
         await Promise.all([loadFilters(), loadStats()]);
