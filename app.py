@@ -650,7 +650,7 @@ def api_support_upload():
             sup_dwg = str(r.get("support tag no.", r.get("support drawing", ""))).strip()
             if not sup_dwg:
                 continue
-            revision = str(r.get("latest", r.get("revision", ""))).strip()
+            revision = str(r.get("latest", r.get("revision", r.get("rev", "")))).strip()
             raw_date = r.get("issue date", "")
             if hasattr(raw_date, "strftime"):
                 issued = raw_date.strftime("%Y-%m-%d")
@@ -663,7 +663,7 @@ def api_support_upload():
                 "type":            str(r.get("type", "")).strip(),
                 "iso_drawing":     str(r.get("iso drawing no.", r.get("iso drawing", ""))).strip(),
                 "line_no":         str(r.get("line no.", r.get("line no", ""))).strip(),
-                "clamp_height":    str(r.get("shoe  height", r.get("clamp height", ""))).strip() or None,
+                "clamp_height":    str(r.get("shoe  height", r.get("clamp height", r.get("clamp h", "")))).strip() or None,
                 "l1":              str(r.get("l1", "")).strip() or None,
                 "l2":              str(r.get("l2", "")).strip() or None,
                 "l3":              str(r.get("l3", "")).strip() or None,
@@ -672,6 +672,32 @@ def api_support_upload():
                 "issued_date":     issued,
                 "file_link":       None,
             })
+
+        # id 컬럼에 DEFAULT 없음 → 기존 id 매핑 후 신규 레코드에 순번 부여
+        existing = {}
+        page_from, page_size = 0, 1000
+        while True:
+            res = supabase.table(TABLE_SUPPORT).select("id,support_drawing,revision").range(
+                page_from, page_from + page_size - 1
+            ).execute()
+            if not res.data:
+                break
+            for row in res.data:
+                existing[(row["support_drawing"], row["revision"])] = row["id"]
+            if len(res.data) < page_size:
+                break
+            page_from += page_size
+
+        max_id = max(existing.values()) if existing else 0
+        new_counter = 0
+        for r in batch:
+            key = (r["support_drawing"], r["revision"])
+            if key in existing:
+                r["id"] = existing[key]
+            else:
+                new_counter += 1
+                r["id"] = max_id + new_counter
+
         inserted = 0
         for i in range(0, len(batch), 500):
             supabase.table(TABLE_SUPPORT).upsert(batch[i:i+500], on_conflict="support_drawing,revision").execute()
