@@ -247,7 +247,15 @@ def get_stats():
         return jsonify({"error": str(e)}), 500
 
 
+_remarks_cache: dict = {}
+_remarks_cache_ts: dict = {}
+REMARKS_CACHE_TTL = 300  # 5분
+
 def _get_distinct_remarks(table):
+    now = _time.time()
+    if table in _remarks_cache and (now - _remarks_cache_ts.get(table, 0)) < REMARKS_CACHE_TTL:
+        return _remarks_cache[table]
+
     supabase = get_client()
     remarks, page_from, page_size = set(), 0, 1000
     while True:
@@ -260,7 +268,11 @@ def _get_distinct_remarks(table):
         if len(res.data) < page_size:
             break
         page_from += page_size
-    return sorted(remarks)
+
+    result = sorted(remarks)
+    _remarks_cache[table] = result
+    _remarks_cache_ts[table] = now
+    return result
 
 
 @app.route("/api/init")
@@ -1170,4 +1182,4 @@ def api_speciality_sync_links():
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5100))
-    app.run(host="0.0.0.0", port=port)
+    app.run(host="0.0.0.0", port=port, threaded=True)
