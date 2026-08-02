@@ -52,6 +52,7 @@ TABLE_SUPPORT    = "support_master"
 TABLE_VALVE      = "valve_master"
 TABLE_SPECIALITY = "speciality_master"
 TABLE_PID        = "pid_master"
+TABLE_MARKED_PID = "marked_pid_master"
 
 SYSTEMS   = ["AS", "ATM", "CCW", "CD", "DW", "FG", "FGH", "FO", "FW", "GT MISC",
              "HP", "HW", "IA", "LO", "LP", "N2", "PW", "RW", "SA", "SS", "ST MISC", "SW", "WWT"]
@@ -1176,6 +1177,131 @@ def api_speciality_sync_links():
 
         return jsonify({"success": True, "synced": len(updates),
                         "message": f"{len(updates)}개 Speciality 도면 링크 연결 완료"})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+# ── Marked PID ────────────────────────────────────────────────
+
+@app.route("/api/markedpid/stats")
+def api_markedpid_stats():
+    try:
+        supabase = get_client()
+        res = supabase.table(TABLE_MARKED_PID).select("id", count="exact").limit(1).execute()
+        return jsonify({"total": res.count or 0})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/markedpid/filters")
+def api_markedpid_filters():
+    try:
+        supabase = get_client()
+        res = supabase.table(TABLE_MARKED_PID).select("system").execute()
+        systems = sorted(set(r["system"] for r in res.data if r.get("system")))
+        return jsonify({"systems": systems})
+    except Exception:
+        return jsonify({"systems": []}), 200
+
+
+@app.route("/api/markedpid/drawings")
+def api_markedpid_drawings():
+    try:
+        search   = request.args.get("search", "").strip()
+        system   = request.args.get("system", "")
+        page     = _safe_int(request.args.get("page", 1), 1)
+        per_page = _safe_int(request.args.get("per_page", 20), 20)
+        offset   = (page - 1) * per_page
+
+        supabase = get_client()
+        query = supabase.table(TABLE_MARKED_PID).select("*", count="exact")
+        if search:
+            s = search.replace(',', '\\,')
+            query = query.or_(f"drawing_no.ilike.%{s}%,title.ilike.%{s}%,system.ilike.%{s}%")
+        if system: query = query.eq("system", system)
+
+        res = query.order("id").range(offset, offset + per_page - 1).execute()
+        for d in res.data:
+            _sanitize_link(d)
+        return jsonify({"total": res.count, "data": res.data})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/markedpid/upload", methods=["POST"])
+def api_markedpid_upload():
+    try:
+        file = request.files.get("file")
+        if not file:
+            return jsonify({"error": "No file shared"}), 400
+        df = pd.read_excel(io.BytesIO(file.read()))
+        df.columns = [str(c).strip() for c in df.columns]
+        df = df.fillna("")
+        supabase = get_client()
+        batch = []
+        for idx, r in df.iterrows():
+            marked_pid = str(r.get("MARKED PID", "")).strip()
+            if not marked_pid or marked_pid == "nan":
+                continue
+            raw_date = r.get("DATE", "")
+            if hasattr(raw_date, "strftime"):
+                date_val = raw_date.strftime("%Y-%m-%d")
+            else:
+                date_val = str(raw_date).strip()[:10] if raw_date and str(raw_date) != "nan" else ""
+            batch.append({
+                "system":      str(r.get("SYSTEM", "")).strip(),
+                "drawing_no":  marked_pid,
+                "title":       str(r.get("DESCRIPTION", "")).strip(),
+                "issued_date": date_val,
+                "file_link":   None,
+            })
+        inserted = 0
+        for i in range(0, len(batch), 500):
+            supabase.table(TABLE_MARKED_PID).upsert(batch[i:i+500], on_conflict="drawing_no").execute()
+            inserted += len(batch[i:i+500])
+        return jsonify({"success": True, "processed": len(batch), "inserted": inserted})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/markedpid/sync-links", methods=["POST"])
+def api_markedpid_sync_links():
+    try:
+        _configure_cloudinary()
+        supabase = get_client()
+
+        master_data, page_from, page_size = [], 0, 1000
+        while True:
+            res = supabase.table(TABLE_MARKED_PID).select("id,drawing_no").range(
+                page_from, page_from + page_size - 1
+            ).execute()
+            if not res.data:
+                break
+            master_data.extend(res.data)
+            if len(res.data) < page_size:
+                break
+            page_from += page_size
+
+        all_cld  = _fetch_cloudinary_all(force=True)
+        dwg_nos  = {row["drawing_no"] for row in master_data if row.get("drawing_no")}
+        uploaded = {k: v for k, v in all_cld.items() if k in dwg_nos}
+
+        updates = []
+        for row in master_data:
+            dwg = row.get("drawing_no")
+            if not dwg:
+                continue
+            url = uploaded.get(dwg)
+            if url:
+                link = url if url.lower().endswith(".pdf") else url + ".pdf"
+                updates.append({"id": row["id"], "drawing_no": dwg, "file_link": link})
+
+        supabase.table(TABLE_MARKED_PID).update({"file_link": None}).neq("id", 0).execute()
+        for i in range(0, len(updates), 500):
+            supabase.table(TABLE_MARKED_PID).upsert(updates[i:i+500], on_conflict="drawing_no").execute()
+
+        return jsonify({"success": True, "synced": len(updates),
+                        "message": f"{len(updates)}개 Marked PID 링크 연결 완료"})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
