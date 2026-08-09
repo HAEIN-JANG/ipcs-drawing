@@ -117,6 +117,39 @@ def _invalidate_stats_cache():
     _stats_cache = None
     _stats_cache_ts = 0
 
+# 조회 응답 캐시 — 도면 데이터는 업로드/링크 동기화 시에만 바뀌므로
+# 접속할 때마다 Supabase를 다시 조회하지 않고, 쓰기 작업 시에만 무효화한다.
+import threading
+from functools import wraps
+
+_resp_cache: dict = {}
+_resp_cache_lock = threading.Lock()
+RESP_CACHE_TTL = 1800  # 30분 — 무효화를 놓쳤을 때를 대비한 안전망
+
+def _invalidate_response_cache():
+    with _resp_cache_lock:
+        _resp_cache.clear()
+
+def cached_get(fn):
+    @wraps(fn)
+    def wrapper(*args, **kwargs):
+        key = request.full_path
+        now = _time.time()
+        with _resp_cache_lock:
+            cached = _resp_cache.get(key)
+            if cached and (now - cached[0]) < RESP_CACHE_TTL:
+                return jsonify(cached[1])
+        result = fn(*args, **kwargs)
+        body, status = (result[0], result[1]) if isinstance(result, tuple) else (result, 200)
+        if status == 200:
+            try:
+                with _resp_cache_lock:
+                    _resp_cache[key] = (now, body.get_json())
+            except Exception:
+                pass
+        return result
+    return wrapper
+
 def _safe_int(val, default, min_val=1):
     try:
         return max(min_val, int(val))
@@ -184,6 +217,7 @@ def index():
 
 
 @app.route("/api/drawings")
+@cached_get
 def get_drawings():
     try:
         search   = request.args.get("search", "").strip()
@@ -277,6 +311,7 @@ def _get_distinct_remarks(table):
 
 
 @app.route("/api/init")
+@cached_get
 def api_init():
     global _stats_cache, _stats_cache_ts
     try:
@@ -315,6 +350,7 @@ def api_init():
 
 
 @app.route("/api/filters")
+@cached_get
 def get_filters():
     try:
         remarks = _get_distinct_remarks(TABLE_ALL)
@@ -381,6 +417,7 @@ def upload_excel():
             supabase.table(TABLE_ALL).upsert(batch[i:i+1000], on_conflict="drawing_no,revision").execute()
             inserted += len(batch[i:i+1000])
         _invalidate_stats_cache()
+        _invalidate_response_cache()
         return jsonify({"success": True, "inserted": inserted, "processed": len(batch)})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
@@ -431,6 +468,7 @@ def api_drawings_sync_links():
         for i in range(0, len(updates), 500):
             supabase.table(TABLE_ALL).upsert(updates[i:i+500], on_conflict="drawing_no,revision").execute()
 
+        _invalidate_response_cache()
         return jsonify({"success": True, "synced": len(updates),
                         "message": f"실제 업로드된 {len(updates)}개의 도면만 링크를 연결했습니다."})
     except Exception as e:
@@ -586,6 +624,7 @@ th {{ background-color: #f1f5f9; font-weight: 600; text-transform: uppercase; }}
 # ── Support Drawing ───────────────────────────────────────────
 
 @app.route("/api/support/stats")
+@cached_get
 def api_support_stats():
     try:
         supabase = get_client()
@@ -596,6 +635,7 @@ def api_support_stats():
 
 
 @app.route("/api/support/filters")
+@cached_get
 def api_support_filters():
     try:
         remarks = _get_distinct_remarks(TABLE_SUPPORT)
@@ -610,6 +650,7 @@ def api_support_filters():
 
 
 @app.route("/api/support/drawings")
+@cached_get
 def api_support_drawings():
     try:
         search      = request.args.get("search", "").strip()
@@ -715,6 +756,7 @@ def api_support_upload():
         for i in range(0, len(batch), 500):
             supabase.table(TABLE_SUPPORT).upsert(batch[i:i+500], on_conflict="support_drawing,revision").execute()
             inserted += len(batch[i:i+500])
+        _invalidate_response_cache()
         return jsonify({"success": True, "inserted": inserted, "processed": len(batch)})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
@@ -783,6 +825,7 @@ def api_support_sync_links():
         for i in range(0, len(updates), 500):
             supabase.table(TABLE_SUPPORT).upsert(updates[i:i + 500], on_conflict="support_drawing,revision").execute()
 
+        _invalidate_response_cache()
         return jsonify({"success": True, "synced": len(updates),
                         "message": f"실제 업로드된 {len(updates)}개의 도면만 링크를 연결했습니다."})
     except Exception as e:
@@ -792,6 +835,7 @@ def api_support_sync_links():
 # ── P&ID Drawing ──────────────────────────────────────────────
 
 @app.route("/api/pid/stats")
+@cached_get
 def api_pid_stats():
     try:
         supabase = get_client()
@@ -802,6 +846,7 @@ def api_pid_stats():
 
 
 @app.route("/api/pid/filters")
+@cached_get
 def api_pid_filters():
     try:
         supabase = get_client()
@@ -814,6 +859,7 @@ def api_pid_filters():
 
 
 @app.route("/api/pid/drawings")
+@cached_get
 def api_pid_drawings():
     try:
         search   = request.args.get("search", "").strip()
@@ -872,6 +918,7 @@ def api_pid_upload():
         for i in range(0, len(batch), 500):
             supabase.table(TABLE_PID).upsert(batch[i:i+500], on_conflict="drawing_no").execute()
             inserted += len(batch[i:i+500])
+        _invalidate_response_cache()
         return jsonify({"success": True, "processed": len(batch), "inserted": inserted})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
@@ -913,6 +960,7 @@ def api_pid_sync_links():
         for i in range(0, len(updates), 500):
             supabase.table(TABLE_PID).upsert(updates[i:i+500], on_conflict="drawing_no").execute()
 
+        _invalidate_response_cache()
         return jsonify({"success": True, "synced": len(updates),
                         "message": f"{len(updates)}개 PID 도면 링크 연결 완료"})
     except Exception as e:
@@ -922,6 +970,7 @@ def api_pid_sync_links():
 # ── Valve Drawing ─────────────────────────────────────────────
 
 @app.route("/api/valve/stats")
+@cached_get
 def api_valve_stats():
     try:
         supabase = get_client()
@@ -932,6 +981,7 @@ def api_valve_stats():
 
 
 @app.route("/api/valve/filters")
+@cached_get
 def api_valve_filters():
     try:
         supabase = get_client()
@@ -944,6 +994,7 @@ def api_valve_filters():
 
 
 @app.route("/api/valve/drawings")
+@cached_get
 def api_valve_drawings():
     try:
         search   = request.args.get("search", "").strip()
@@ -1002,6 +1053,7 @@ def api_valve_upload():
         for i in range(0, len(batch), 500):
             supabase.table(TABLE_VALVE).upsert(batch[i:i+500], on_conflict="drawing_no").execute()
             inserted += len(batch[i:i+500])
+        _invalidate_response_cache()
         return jsonify({"success": True, "processed": len(batch), "inserted": inserted})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
@@ -1043,6 +1095,7 @@ def api_valve_sync_links():
         for i in range(0, len(updates), 500):
             supabase.table(TABLE_VALVE).upsert(updates[i:i+500], on_conflict="drawing_no").execute()
 
+        _invalidate_response_cache()
         return jsonify({"success": True, "synced": len(updates),
                         "message": f"{len(updates)}개 Valve 도면 링크 연결 완료"})
     except Exception as e:
@@ -1052,6 +1105,7 @@ def api_valve_sync_links():
 # ── Speciality Drawing ────────────────────────────────────────
 
 @app.route("/api/speciality/stats")
+@cached_get
 def api_speciality_stats():
     try:
         supabase = get_client()
@@ -1062,6 +1116,7 @@ def api_speciality_stats():
 
 
 @app.route("/api/speciality/filters")
+@cached_get
 def api_speciality_filters():
     try:
         supabase = get_client()
@@ -1074,6 +1129,7 @@ def api_speciality_filters():
 
 
 @app.route("/api/speciality/drawings")
+@cached_get
 def api_speciality_drawings():
     try:
         search   = request.args.get("search", "").strip()
@@ -1134,6 +1190,7 @@ def api_speciality_upload():
         for i in range(0, len(batch), 500):
             supabase.table(TABLE_SPECIALITY).upsert(batch[i:i+500], on_conflict="drawing_no").execute()
             inserted += len(batch[i:i+500])
+        _invalidate_response_cache()
         return jsonify({"success": True, "processed": len(batch), "inserted": inserted})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
@@ -1175,6 +1232,7 @@ def api_speciality_sync_links():
         for i in range(0, len(updates), 500):
             supabase.table(TABLE_SPECIALITY).upsert(updates[i:i+500], on_conflict="drawing_no").execute()
 
+        _invalidate_response_cache()
         return jsonify({"success": True, "synced": len(updates),
                         "message": f"{len(updates)}개 Speciality 도면 링크 연결 완료"})
     except Exception as e:
@@ -1184,6 +1242,7 @@ def api_speciality_sync_links():
 # ── Marked PID ────────────────────────────────────────────────
 
 @app.route("/api/markedpid/stats")
+@cached_get
 def api_markedpid_stats():
     try:
         supabase = get_client()
@@ -1194,6 +1253,7 @@ def api_markedpid_stats():
 
 
 @app.route("/api/markedpid/filters")
+@cached_get
 def api_markedpid_filters():
     try:
         supabase = get_client()
@@ -1205,6 +1265,7 @@ def api_markedpid_filters():
 
 
 @app.route("/api/markedpid/drawings")
+@cached_get
 def api_markedpid_drawings():
     try:
         search   = request.args.get("search", "").strip()
@@ -1259,6 +1320,7 @@ def api_markedpid_upload():
         for i in range(0, len(batch), 500):
             supabase.table(TABLE_MARKED_PID).upsert(batch[i:i+500], on_conflict="drawing_no").execute()
             inserted += len(batch[i:i+500])
+        _invalidate_response_cache()
         return jsonify({"success": True, "processed": len(batch), "inserted": inserted})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
@@ -1300,6 +1362,7 @@ def api_markedpid_sync_links():
         for i in range(0, len(updates), 500):
             supabase.table(TABLE_MARKED_PID).upsert(updates[i:i+500], on_conflict="drawing_no").execute()
 
+        _invalidate_response_cache()
         return jsonify({"success": True, "synced": len(updates),
                         "message": f"{len(updates)}개 Marked PID 링크 연결 완료"})
     except Exception as e:
