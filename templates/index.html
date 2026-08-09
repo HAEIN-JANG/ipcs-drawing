@@ -2498,6 +2498,13 @@
   <script>
     /* ─── Init ───────────────────────────────────────── */
     (async () => {
+      const requestedTab = new URLSearchParams(location.search).get('tab');
+      const validTabs = ['iso', 'support', 'valve', 'speciality', 'pid', 'markedpid'];
+      if (requestedTab && validTabs.includes(requestedTab) && requestedTab !== 'iso') {
+        switchCategory(requestedTab);
+        return;
+      }
+
       try {
         showLoading(true);
         const res = await fetch('/api/init');
