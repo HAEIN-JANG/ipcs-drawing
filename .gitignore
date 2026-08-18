@@ -8,3 +8,4 @@ scratch/
 Raw Data/
 *.tmp
 .DS_Store
+.playwright-mcp/

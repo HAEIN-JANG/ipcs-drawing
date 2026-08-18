@@ -108,10 +108,6 @@ _stats_cache = None
 _stats_cache_ts = 0
 STATS_CACHE_TTL = 60
 
-_cld_cache: dict = None
-_cld_cache_ts: float = 0
-CLD_CACHE_TTL = 300  # 5분
-
 def _invalidate_stats_cache():
     global _stats_cache, _stats_cache_ts
     _stats_cache = None
@@ -129,6 +125,8 @@ RESP_CACHE_TTL = 1800  # 30분 — 무효화를 놓쳤을 때를 대비한 안�
 def _invalidate_response_cache():
     with _resp_cache_lock:
         _resp_cache.clear()
+    _remarks_cache.clear()
+    _remarks_cache_ts.clear()
 
 def cached_get(fn):
     @wraps(fn)
@@ -177,6 +175,8 @@ def _configure_cloudinary():
     import cloudinary
     import cloudinary.api
     cld_url = os.environ.get("CLOUDINARY_URL", "")
+    if not cld_url:
+        raise ValueError("CLOUDINARY_URL이 설정되지 않았습니다. .env 파일을 확인하세요.")
     m = re.match(r"cloudinary://([^:]+):([^@]+)@(.+)", cld_url)
     if not m:
         raise ValueError("CLOUDINARY_URL 형식이 잘못되었습니다.")
@@ -184,11 +184,8 @@ def _configure_cloudinary():
     cloudinary.config(api_key=m.group(1), api_secret=m.group(2), cloud_name=cloud_name)
     return cloud_name
 
-def _fetch_cloudinary_all(resource_type="image", force=False):
-    global _cld_cache, _cld_cache_ts
+def _fetch_cloudinary_all(resource_type="image"):
     import cloudinary.api
-    if not force and _cld_cache and (_time.time() - _cld_cache_ts) < CLD_CACHE_TTL:
-        return _cld_cache
     uploaded = {}
     next_cursor = None
     while True:
@@ -202,9 +199,52 @@ def _fetch_cloudinary_all(resource_type="image", force=False):
         next_cursor = res.get("next_cursor")
         if not next_cursor:
             break
-    _cld_cache = uploaded
-    _cld_cache_ts = _time.time()
     return uploaded
+
+def _fetch_all_paginated(supabase, table, columns, page_size=1000):
+    rows, page_from = [], 0
+    while True:
+        res = supabase.table(table).select(columns).range(page_from, page_from + page_size - 1).execute()
+        if not res.data:
+            break
+        rows.extend(res.data)
+        if len(res.data) < page_size:
+            break
+        page_from += page_size
+    return rows
+
+def _assign_sequential_ids(supabase, table, batch, key_cols):
+    # id 컬럼에 DEFAULT 없음 → 기존 id 매핑 후 신규 레코드에 순번 부여.
+    # 동일 배치 내 중복 키는 upsert의 on_conflict 대상이 두 번 걸려 실패하므로 마지막 값만 남긴다.
+    deduped = {}
+    for r in batch:
+        deduped[tuple(r[c] for c in key_cols)] = r
+    batch = list(deduped.values())
+
+    existing = {}
+    for row in _fetch_all_paginated(supabase, table, ",".join(("id",) + key_cols)):
+        existing[tuple(row[c] for c in key_cols)] = row["id"]
+
+    max_id = max(existing.values()) if existing else 0
+    new_counter = 0
+    for r in batch:
+        key = tuple(r[c] for c in key_cols)
+        if key in existing:
+            r["id"] = existing[key]
+        else:
+            new_counter += 1
+            r["id"] = max_id + new_counter
+    return batch
+
+def _parse_excel_date(raw_date):
+    if hasattr(raw_date, "strftime"):
+        return raw_date.strftime("%Y-%m-%d")
+    s = str(raw_date).strip()
+    return s[:10] if raw_date and s != "nan" else ""
+
+def _simple_count(table):
+    res = get_client().table(table).select("id", count="exact").limit(1).execute()
+    return res.count or 0
 
 
 @app.route("/")
@@ -292,19 +332,8 @@ def _get_distinct_remarks(table):
         return _remarks_cache[table]
 
     supabase = get_client()
-    remarks, page_from, page_size = set(), 0, 1000
-    while True:
-        res = supabase.table(table).select("remark").not_.is_("remark", "null").range(
-            page_from, page_from + page_size - 1
-        ).execute()
-        if not res.data:
-            break
-        remarks.update(row["remark"] for row in res.data if row.get("remark"))
-        if len(res.data) < page_size:
-            break
-        page_from += page_size
-
-    result = sorted(remarks)
+    rows = _fetch_all_paginated(supabase, table, "remark")
+    result = sorted({row["remark"] for row in rows if row.get("remark")})
     _remarks_cache[table] = result
     _remarks_cache_ts[table] = now
     return result
@@ -387,30 +416,7 @@ def upload_excel():
                 "file_link":   f_link,
             })
 
-        # id 컬럼에 DEFAULT 없음 → 기존 id 매핑 후 신규 레코드에 순번 부여
-        existing = {}
-        page_from, page_size = 0, 1000
-        while True:
-            res = supabase.table(TABLE_ALL).select("id,drawing_no,revision").range(
-                page_from, page_from + page_size - 1
-            ).execute()
-            if not res.data:
-                break
-            for row in res.data:
-                existing[(row["drawing_no"], row["revision"])] = row["id"]
-            if len(res.data) < page_size:
-                break
-            page_from += page_size
-
-        max_id = max(existing.values()) if existing else 0
-        new_counter = 0
-        for r in batch:
-            key = (r["drawing_no"], r["revision"])
-            if key in existing:
-                r["id"] = existing[key]
-            else:
-                new_counter += 1
-                r["id"] = max_id + new_counter
+        batch = _assign_sequential_ids(supabase, TABLE_ALL, batch, ("drawing_no", "revision"))
 
         inserted = 0
         for i in range(0, len(batch), 1000):
@@ -429,19 +435,9 @@ def api_drawings_sync_links():
         _configure_cloudinary()
         supabase = get_client()
 
-        master_data, page_from, page_size = [], 0, 1000
-        while True:
-            res = supabase.table(TABLE_ALL).select("id,drawing_no,revision").range(
-                page_from, page_from + page_size - 1
-            ).execute()
-            if not res.data:
-                break
-            master_data.extend(res.data)
-            if len(res.data) < page_size:
-                break
-            page_from += page_size
+        master_data = _fetch_all_paginated(supabase, TABLE_ALL, "id,drawing_no,revision")
 
-        uploaded = _fetch_cloudinary_all(force=True)
+        uploaded = _fetch_cloudinary_all()
         uploaded_norm  = {k.replace('--', '-'): v for k, v in uploaded.items()}
         uploaded_lower = {k.lower(): v for k, v in uploaded.items()}
 
@@ -472,6 +468,7 @@ def api_drawings_sync_links():
         return jsonify({"success": True, "synced": len(updates),
                         "message": f"실제 업로드된 {len(updates)}개의 도면만 링크를 연결했습니다."})
     except Exception as e:
+        import traceback; traceback.print_exc()
         return jsonify({"error": str(e)}), 500
 
 
@@ -627,9 +624,7 @@ th {{ background-color: #f1f5f9; font-weight: 600; text-transform: uppercase; }}
 @cached_get
 def api_support_stats():
     try:
-        supabase = get_client()
-        res = supabase.table("support_latest").select("id", count="exact").limit(1).execute()
-        return jsonify({"total": res.count or 0})
+        return jsonify({"total": _simple_count("support_latest")})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
@@ -671,7 +666,7 @@ def api_support_drawings():
         if system: query = query.eq("system", system)
         if type_filter:
             if type_filter in ("G", "GS", "U", "US", "W", "WS"):
-                query = query.like("type", f"({type_filter}-%")
+                query = query.ilike("type", f"({type_filter}-%")
             else:
                 query = query.eq("type", type_filter)
         if size: query = _apply_size_filter(query, size)
@@ -727,30 +722,7 @@ def api_support_upload():
                 "file_link":       None,
             })
 
-        # id 컬럼에 DEFAULT 없음 → 기존 id 매핑 후 신규 레코드에 순번 부여
-        existing = {}
-        page_from, page_size = 0, 1000
-        while True:
-            res = supabase.table(TABLE_SUPPORT).select("id,support_drawing,revision").range(
-                page_from, page_from + page_size - 1
-            ).execute()
-            if not res.data:
-                break
-            for row in res.data:
-                existing[(row["support_drawing"], row["revision"])] = row["id"]
-            if len(res.data) < page_size:
-                break
-            page_from += page_size
-
-        max_id = max(existing.values()) if existing else 0
-        new_counter = 0
-        for r in batch:
-            key = (r["support_drawing"], r["revision"])
-            if key in existing:
-                r["id"] = existing[key]
-            else:
-                new_counter += 1
-                r["id"] = max_id + new_counter
+        batch = _assign_sequential_ids(supabase, TABLE_SUPPORT, batch, ("support_drawing", "revision"))
 
         inserted = 0
         for i in range(0, len(batch), 500):
@@ -768,20 +740,9 @@ def api_support_sync_links():
         _configure_cloudinary()
         supabase = get_client()
 
-        master_data = []
-        page_from, page_size = 0, 1000
-        while True:
-            res = supabase.table(TABLE_SUPPORT).select("id,support_drawing,revision,type").range(
-                page_from, page_from + page_size - 1
-            ).execute()
-            if not res.data:
-                break
-            master_data.extend(res.data)
-            if len(res.data) < page_size:
-                break
-            page_from += page_size
+        master_data = _fetch_all_paginated(supabase, TABLE_SUPPORT, "id,support_drawing,revision,type")
 
-        uploaded = _fetch_cloudinary_all(force=True)
+        uploaded = _fetch_cloudinary_all()
         uploaded_norm  = {k.replace('--', '-'): v for k, v in uploaded.items()}
         uploaded_lower = {k.lower(): v for k, v in uploaded.items()}
 
@@ -829,6 +790,7 @@ def api_support_sync_links():
         return jsonify({"success": True, "synced": len(updates),
                         "message": f"실제 업로드된 {len(updates)}개의 도면만 링크를 연결했습니다."})
     except Exception as e:
+        import traceback; traceback.print_exc()
         return jsonify({"error": str(e)}), 500
 
 
@@ -838,9 +800,7 @@ def api_support_sync_links():
 @cached_get
 def api_pid_stats():
     try:
-        supabase = get_client()
-        res = supabase.table(TABLE_PID).select("id", count="exact").limit(1).execute()
-        return jsonify({"total": res.count or 0})
+        return jsonify({"total": _simple_count(TABLE_PID)})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
@@ -855,7 +815,7 @@ def api_pid_filters():
         revisions = sorted(set(r["revision"] for r in res.data if r.get("revision")))
         return jsonify({"systems": systems, "revisions": revisions})
     except Exception:
-        return jsonify({"systems": [], "revisions": []}), 200
+        return jsonify({"systems": [], "revisions": []}), 500
 
 
 @app.route("/api/pid/drawings")
@@ -896,15 +856,12 @@ def api_pid_upload():
         df = df.fillna("")
         supabase = get_client()
         batch = []
-        for idx, r in df.iterrows():
+        for idx, r in enumerate(df.to_dict("records")):
             dwg_no = str(r.get("Drawing No", "")).strip()
             if not dwg_no or dwg_no == "nan":
                 continue
             raw_date = r.get("Date", "")
-            if hasattr(raw_date, "strftime"):
-                date_val = raw_date.strftime("%Y-%m-%d")
-            else:
-                date_val = str(raw_date).strip()[:10] if raw_date and str(raw_date) != "nan" else ""
+            date_val = _parse_excel_date(raw_date)
             batch.append({
                 "id":          int(r.get("No", idx + 1)),
                 "system":      str(r.get("System", "")).strip(),
@@ -930,20 +887,10 @@ def api_pid_sync_links():
         _configure_cloudinary()
         supabase = get_client()
 
-        master_data, page_from, page_size = [], 0, 1000
-        while True:
-            res = supabase.table(TABLE_PID).select("id,drawing_no").range(
-                page_from, page_from + page_size - 1
-            ).execute()
-            if not res.data:
-                break
-            master_data.extend(res.data)
-            if len(res.data) < page_size:
-                break
-            page_from += page_size
+        master_data = _fetch_all_paginated(supabase, TABLE_PID, "id,drawing_no")
 
         pid_nos  = {row["drawing_no"].lower() for row in master_data if row.get("drawing_no")}
-        all_cld  = _fetch_cloudinary_all(force=True)
+        all_cld  = _fetch_cloudinary_all()
         uploaded = {k.lower(): v for k, v in all_cld.items() if k.lower() in pid_nos}
 
         updates = []
@@ -958,12 +905,13 @@ def api_pid_sync_links():
 
         supabase.table(TABLE_PID).update({"file_link": None}).neq("id", 0).execute()
         for i in range(0, len(updates), 500):
-            supabase.table(TABLE_PID).upsert(updates[i:i+500], on_conflict="drawing_no").execute()
+            supabase.table(TABLE_PID).upsert(updates[i:i+500], on_conflict="id").execute()
 
         _invalidate_response_cache()
         return jsonify({"success": True, "synced": len(updates),
                         "message": f"{len(updates)}개 PID 도면 링크 연결 완료"})
     except Exception as e:
+        import traceback; traceback.print_exc()
         return jsonify({"error": str(e)}), 500
 
 
@@ -973,9 +921,7 @@ def api_pid_sync_links():
 @cached_get
 def api_valve_stats():
     try:
-        supabase = get_client()
-        res = supabase.table(TABLE_VALVE).select("id", count="exact").limit(1).execute()
-        return jsonify({"total": res.count or 0})
+        return jsonify({"total": _simple_count(TABLE_VALVE)})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
@@ -990,7 +936,7 @@ def api_valve_filters():
         revisions = sorted(set(r["revision"] for r in res.data if r.get("revision")))
         return jsonify({"valves": valves, "revisions": revisions})
     except Exception:
-        return jsonify({"valves": [], "revisions": []}), 200
+        return jsonify({"valves": [], "revisions": []}), 500
 
 
 @app.route("/api/valve/drawings")
@@ -1031,15 +977,12 @@ def api_valve_upload():
         df = df.fillna("")
         supabase = get_client()
         batch = []
-        for idx, r in df.iterrows():
+        for idx, r in enumerate(df.to_dict("records")):
             dwg_no = str(r.get("Drawing No", r.get("Drawing No.", ""))).strip()
             if not dwg_no or dwg_no == "nan":
                 continue
             raw_date = r.get("Date", "")
-            if hasattr(raw_date, "strftime"):
-                date_val = raw_date.strftime("%Y-%m-%d")
-            else:
-                date_val = str(raw_date).strip()[:10] if raw_date and str(raw_date) != "nan" else ""
+            date_val = _parse_excel_date(raw_date)
             batch.append({
                 "id":          int(r.get("No", idx + 1)),
                 "valve":       str(r.get("Valve", r.get("Item", ""))).strip(),
@@ -1065,19 +1008,9 @@ def api_valve_sync_links():
         _configure_cloudinary()
         supabase = get_client()
 
-        master_data, page_from, page_size = [], 0, 1000
-        while True:
-            res = supabase.table(TABLE_VALVE).select("id,drawing_no").range(
-                page_from, page_from + page_size - 1
-            ).execute()
-            if not res.data:
-                break
-            master_data.extend(res.data)
-            if len(res.data) < page_size:
-                break
-            page_from += page_size
+        master_data = _fetch_all_paginated(supabase, TABLE_VALVE, "id,drawing_no")
 
-        all_cld  = _fetch_cloudinary_all(force=True)
+        all_cld  = _fetch_cloudinary_all()
         dwg_nos  = {row["drawing_no"].lower() for row in master_data if row.get("drawing_no")}
         uploaded = {k.lower(): v for k, v in all_cld.items() if k.lower() in dwg_nos}
 
@@ -1093,12 +1026,13 @@ def api_valve_sync_links():
 
         supabase.table(TABLE_VALVE).update({"file_link": None}).neq("id", 0).execute()
         for i in range(0, len(updates), 500):
-            supabase.table(TABLE_VALVE).upsert(updates[i:i+500], on_conflict="drawing_no").execute()
+            supabase.table(TABLE_VALVE).upsert(updates[i:i+500], on_conflict="id").execute()
 
         _invalidate_response_cache()
         return jsonify({"success": True, "synced": len(updates),
                         "message": f"{len(updates)}개 Valve 도면 링크 연결 완료"})
     except Exception as e:
+        import traceback; traceback.print_exc()
         return jsonify({"error": str(e)}), 500
 
 
@@ -1108,9 +1042,7 @@ def api_valve_sync_links():
 @cached_get
 def api_speciality_stats():
     try:
-        supabase = get_client()
-        res = supabase.table(TABLE_SPECIALITY).select("id", count="exact").limit(1).execute()
-        return jsonify({"total": res.count or 0})
+        return jsonify({"total": _simple_count(TABLE_SPECIALITY)})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
@@ -1125,7 +1057,7 @@ def api_speciality_filters():
         titles    = sorted(set(r["title"]    for r in res.data if r.get("title")))
         return jsonify({"revisions": revisions, "titles": titles})
     except Exception:
-        return jsonify({"revisions": [], "titles": []}), 200
+        return jsonify({"revisions": [], "titles": []}), 500
 
 
 @app.route("/api/speciality/drawings")
@@ -1166,15 +1098,12 @@ def api_speciality_upload():
         df = df.fillna("")
         supabase = get_client()
         batch = []
-        for idx, r in df.iterrows():
+        for idx, r in enumerate(df.to_dict("records")):
             dwg_no = str(r.get("Drawing No", r.get("Drawing No.", ""))).strip()
             if not dwg_no or dwg_no == "nan":
                 continue
             raw_date = r.get("Date", "")
-            if hasattr(raw_date, "strftime"):
-                date_val = raw_date.strftime("%Y-%m-%d")
-            else:
-                date_val = str(raw_date).strip()[:10] if raw_date and str(raw_date) != "nan" else ""
+            date_val = _parse_excel_date(raw_date)
             batch.append({
                 "id":          int(r.get("No", idx + 1)),
                 "drawing_no":  dwg_no,
@@ -1202,19 +1131,9 @@ def api_speciality_sync_links():
         _configure_cloudinary()
         supabase = get_client()
 
-        master_data, page_from, page_size = [], 0, 1000
-        while True:
-            res = supabase.table(TABLE_SPECIALITY).select("id,drawing_no").range(
-                page_from, page_from + page_size - 1
-            ).execute()
-            if not res.data:
-                break
-            master_data.extend(res.data)
-            if len(res.data) < page_size:
-                break
-            page_from += page_size
+        master_data = _fetch_all_paginated(supabase, TABLE_SPECIALITY, "id,drawing_no")
 
-        all_cld  = _fetch_cloudinary_all(force=True)
+        all_cld  = _fetch_cloudinary_all()
         dwg_nos  = {row["drawing_no"].lower() for row in master_data if row.get("drawing_no")}
         uploaded = {k.lower(): v for k, v in all_cld.items() if k.lower() in dwg_nos}
 
@@ -1230,12 +1149,13 @@ def api_speciality_sync_links():
 
         supabase.table(TABLE_SPECIALITY).update({"file_link": None}).neq("id", 0).execute()
         for i in range(0, len(updates), 500):
-            supabase.table(TABLE_SPECIALITY).upsert(updates[i:i+500], on_conflict="drawing_no").execute()
+            supabase.table(TABLE_SPECIALITY).upsert(updates[i:i+500], on_conflict="id").execute()
 
         _invalidate_response_cache()
         return jsonify({"success": True, "synced": len(updates),
                         "message": f"{len(updates)}개 Speciality 도면 링크 연결 완료"})
     except Exception as e:
+        import traceback; traceback.print_exc()
         return jsonify({"error": str(e)}), 500
 
 
@@ -1245,9 +1165,7 @@ def api_speciality_sync_links():
 @cached_get
 def api_markedpid_stats():
     try:
-        supabase = get_client()
-        res = supabase.table(TABLE_MARKED_PID).select("id", count="exact").limit(1).execute()
-        return jsonify({"total": res.count or 0})
+        return jsonify({"total": _simple_count(TABLE_MARKED_PID)})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
@@ -1261,7 +1179,7 @@ def api_markedpid_filters():
         systems = sorted(set(r["system"] for r in res.data if r.get("system")))
         return jsonify({"systems": systems})
     except Exception:
-        return jsonify({"systems": []}), 200
+        return jsonify({"systems": []}), 500
 
 
 @app.route("/api/markedpid/drawings")
@@ -1300,15 +1218,12 @@ def api_markedpid_upload():
         df = df.fillna("")
         supabase = get_client()
         batch = []
-        for idx, r in df.iterrows():
+        for idx, r in enumerate(df.to_dict("records")):
             marked_pid = str(r.get("MARKED PID", "")).strip()
             if not marked_pid or marked_pid == "nan":
                 continue
             raw_date = r.get("DATE", "")
-            if hasattr(raw_date, "strftime"):
-                date_val = raw_date.strftime("%Y-%m-%d")
-            else:
-                date_val = str(raw_date).strip()[:10] if raw_date and str(raw_date) != "nan" else ""
+            date_val = _parse_excel_date(raw_date)
             batch.append({
                 "system":      str(r.get("SYSTEM", "")).strip(),
                 "drawing_no":  marked_pid,
@@ -1332,40 +1247,31 @@ def api_markedpid_sync_links():
         _configure_cloudinary()
         supabase = get_client()
 
-        master_data, page_from, page_size = [], 0, 1000
-        while True:
-            res = supabase.table(TABLE_MARKED_PID).select("id,drawing_no").range(
-                page_from, page_from + page_size - 1
-            ).execute()
-            if not res.data:
-                break
-            master_data.extend(res.data)
-            if len(res.data) < page_size:
-                break
-            page_from += page_size
+        master_data = _fetch_all_paginated(supabase, TABLE_MARKED_PID, "id,drawing_no")
 
-        all_cld  = _fetch_cloudinary_all(force=True)
-        dwg_nos  = {row["drawing_no"] for row in master_data if row.get("drawing_no")}
-        uploaded = {k: v for k, v in all_cld.items() if k in dwg_nos}
+        all_cld  = _fetch_cloudinary_all()
+        dwg_nos  = {row["drawing_no"].lower() for row in master_data if row.get("drawing_no")}
+        uploaded = {k.lower(): v for k, v in all_cld.items() if k.lower() in dwg_nos}
 
         updates = []
         for row in master_data:
             dwg = row.get("drawing_no")
             if not dwg:
                 continue
-            url = uploaded.get(dwg)
+            url = uploaded.get(dwg.lower())
             if url:
                 link = url if url.lower().endswith(".pdf") else url + ".pdf"
                 updates.append({"id": row["id"], "drawing_no": dwg, "file_link": link})
 
         supabase.table(TABLE_MARKED_PID).update({"file_link": None}).neq("id", 0).execute()
         for i in range(0, len(updates), 500):
-            supabase.table(TABLE_MARKED_PID).upsert(updates[i:i+500], on_conflict="drawing_no").execute()
+            supabase.table(TABLE_MARKED_PID).upsert(updates[i:i+500], on_conflict="id").execute()
 
         _invalidate_response_cache()
         return jsonify({"success": True, "synced": len(updates),
                         "message": f"{len(updates)}개 Marked PID 링크 연결 완료"})
     except Exception as e:
+        import traceback; traceback.print_exc()
         return jsonify({"error": str(e)}), 500
 
 

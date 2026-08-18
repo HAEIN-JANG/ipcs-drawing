@@ -1362,7 +1362,8 @@
         status: '',
         type: '',
         title: '',
-        size: ''
+        size: '',
+        remark: ''
       },
       globalStats: {}
     };
@@ -1601,7 +1602,7 @@
       const href = safeHref(url);
       const text = esc(label) || '—';
       return href
-        ? `<a href="${href}" target="_blank" class="td-dwgno">${text}</a>`
+        ? `<a href="${esc(href)}" target="_blank" class="td-dwgno">${text}</a>`
         : `<span class="td-dwgno no-link">${text}</span>`;
     }
 
@@ -2433,7 +2434,8 @@
       const params = new URLSearchParams({
         search: state.filters.search || '',
         system: state.filters.system || '',
-        status: state.filters.status || ''
+        status: state.filters.status || '',
+        size: state.filters.size || ''
       });
       window.location.href = `/api/export?${params}`;
     }
