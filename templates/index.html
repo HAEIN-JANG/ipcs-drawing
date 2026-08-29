@@ -2216,14 +2216,13 @@
       `;
 
       state.data.forEach((d, idx) => {
-        const pidDwgLink = makeDwgLink(d.pid_file_link, d.pid_drawing_no);
         const dwgLink = makeDwgLink(d.file_link, d.drawing_no);
 
         tableHtml += `
           <tr>
             <td class="col-pid-no">${offset + idx + 1}</td>
             <td class="col-pid-sys">${esc(d.system) || '—'}</td>
-            <td class="col-pid-dwg">${pidDwgLink}</td>
+            <td class="col-pid-dwg">${esc(d.pid_drawing_no) || '—'}</td>
             <td class="col-pid-dwg">${dwgLink}</td>
             <td style="text-align:center;">${esc(d.title) || '—'}</td>
             <td class="col-pid-date">${esc((d.issued_date || '').substring(0, 10)) || '—'}</td>

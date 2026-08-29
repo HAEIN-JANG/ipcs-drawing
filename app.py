@@ -1201,18 +1201,15 @@ def api_markedpid_drawings():
 
         res = query.order("id").range(offset, offset + per_page - 1).execute()
 
-        pid_res = supabase.table(TABLE_PID).select("system,drawing_no,file_link").execute()
+        pid_res = supabase.table(TABLE_PID).select("system,drawing_no").execute()
         pid_by_system = {}
         for p in pid_res.data:
             if p.get("system"):
-                pid_by_system[p["system"]] = p
+                pid_by_system[p["system"]] = p["drawing_no"]
 
         for d in res.data:
             _sanitize_link(d)
-            pid_row = pid_by_system.get(d.get("system"))
-            d["pid_drawing_no"] = pid_row["drawing_no"] if pid_row else None
-            d["pid_file_link"]  = pid_row["file_link"] if pid_row else None
-            _sanitize_link(d, "pid_file_link")
+            d["pid_drawing_no"] = pid_by_system.get(d.get("system"))
         return jsonify({"total": res.count, "data": res.data})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
