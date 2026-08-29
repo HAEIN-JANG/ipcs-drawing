@@ -837,7 +837,7 @@ def api_pid_drawings():
         if system:   query = query.eq("system", system)
         if revision: query = query.eq("revision", revision)
 
-        res = query.order("system", desc=True).order("drawing_no").range(offset, offset + per_page - 1).execute()
+        res = query.order("system").order("drawing_no").range(offset, offset + per_page - 1).execute()
         for d in res.data:
             _sanitize_link(d)
         return jsonify({"total": res.count, "data": res.data})
