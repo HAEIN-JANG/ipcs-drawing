@@ -606,6 +606,12 @@
     .col-pid-rev  { width: 172px; min-width: 150px; text-align: center; }
     .col-pid-date { width: 200px; min-width: 180px; text-align: center; white-space: nowrap; }
 
+    /* Marked PID Specific Columns */
+    .col-mpid-sys  { width: 90px;  min-width: 80px;  text-align: center; }
+    .col-mpid-dwg  { width: 220px; min-width: 180px; }
+    .col-mpid-desc { white-space: nowrap; }
+    .col-mpid-date { width: 110px; min-width: 100px; text-align: center; white-space: nowrap; }
+
     /* PDF & DWG Special Styles */
     .pdf-btn {
       display: inline-flex;
@@ -2205,11 +2211,11 @@
             <thead>
               <tr>
                 <th class="col-pid-no">NO.</th>
-                <th class="col-pid-sys">SYSTEM</th>
-                <th class="col-pid-dwg">DRAWING NO.</th>
-                <th class="col-pid-dwg">MARKED PID</th>
-                <th style="text-align:center;">DESCRIPTION</th>
-                <th class="col-pid-date">DATE</th>
+                <th class="col-mpid-sys">SYSTEM</th>
+                <th class="col-mpid-dwg">DRAWING NO.</th>
+                <th class="col-mpid-dwg">MARKED PID</th>
+                <th class="col-mpid-desc" style="text-align:center;">DESCRIPTION</th>
+                <th class="col-mpid-date">DATE</th>
               </tr>
             </thead>
             <tbody>
@@ -2221,11 +2227,11 @@
         tableHtml += `
           <tr>
             <td class="col-pid-no">${offset + idx + 1}</td>
-            <td class="col-pid-sys">${esc(d.system) || '—'}</td>
-            <td class="col-pid-dwg">${esc(d.pid_drawing_no) || '—'}</td>
-            <td class="col-pid-dwg">${dwgLink}</td>
-            <td style="text-align:center;">${esc(d.title) || '—'}</td>
-            <td class="col-pid-date">${esc((d.issued_date || '').substring(0, 10)) || '—'}</td>
+            <td class="col-mpid-sys">${esc(d.system) || '—'}</td>
+            <td class="col-mpid-dwg">${esc(d.pid_drawing_no) || '—'}</td>
+            <td class="col-mpid-dwg">${dwgLink}</td>
+            <td class="col-mpid-desc" style="text-align:center;">${esc(d.title) || '—'}</td>
+            <td class="col-mpid-date">${esc((d.issued_date || '').substring(0, 10)) || '—'}</td>
           </tr>
         `;
       });
