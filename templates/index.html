@@ -1180,8 +1180,6 @@
 
     <select class="filter-select" id="filter-size" style="display:none">
       <option value="">ALL SIZE</option>
-      <option value="Large">Large</option>
-      <option value="Small">Small</option>
     </select>
 
     <select class="filter-select" id="filter-status">
@@ -1455,6 +1453,11 @@
             el.innerHTML = '<option value="">ALL REMARK</option>' +
               d.remarks.map(v => `<option value="${v}">${v}</option>`).join('');
           }
+          if (d.sizes) {
+            const el = document.getElementById('filter-size');
+            el.innerHTML = '<option value="">ALL SIZE</option>' +
+              d.sizes.map(v => `<option value="${v}">${v}</option>`).join('');
+          }
         }).catch(() => {});
       } else if (cat === 'iso') {
         loadStats();
@@ -1473,6 +1476,11 @@
             const el = document.getElementById('filter-remark');
             el.innerHTML = '<option value="">ALL REMARK</option>' +
               d.remarks.map(v => `<option value="${v}">${v}</option>`).join('');
+          }
+          if (d.sizes) {
+            const el = document.getElementById('filter-size');
+            el.innerHTML = '<option value="">ALL SIZE</option>' +
+              d.sizes.map(v => `<option value="${v}">${v}</option>`).join('');
           }
         }).catch(() => {});
       } else if (cat === 'valve') {
@@ -1637,6 +1645,22 @@
       if (data.statuses) populate('filter-status', data.statuses, 'STATUS');
       if (data.types) populate('filter-type', data.types, 'TYPE');
       if (data.remarks) populate('filter-remark', data.remarks, 'REMARK');
+      if (data.sizes) populate('filter-size', data.sizes, 'SIZE');
+    }
+
+    async function refreshSizeOptions(system) {
+      const base = state.category === 'support' ? '/api/support/filters' : '/api/filters';
+      const qs = system ? `?system=${encodeURIComponent(system)}` : '';
+      try {
+        const res = await fetch(`${base}${qs}`);
+        const d = await res.json();
+        const sizes = d.sizes || [];
+        const prev = state.filters.size;
+        const el = document.getElementById('filter-size');
+        el.innerHTML = '<option value="">ALL SIZE</option>' +
+          sizes.map(v => `<option value="${v}">${v}</option>`).join('');
+        el.value = sizes.includes(prev) ? prev : '';
+      } catch (e) { console.error('Error loading sizes:', e); }
     }
 
     async function loadFilters() {
@@ -2491,8 +2515,13 @@
     });
 
     ['filter-system', 'filter-size', 'filter-status', 'filter-type', 'filter-title', 'filter-remark'].forEach(id => {
-      document.getElementById(id).addEventListener('change', e => {
-        if (id === 'filter-system') state.filters.system = e.target.value;
+      document.getElementById(id).addEventListener('change', async e => {
+        if (id === 'filter-system') {
+          state.filters.system = e.target.value;
+          if (state.category === 'iso' || state.category === 'support') {
+            await refreshSizeOptions(e.target.value);
+          }
+        }
         if (id === 'filter-size')   state.filters.size   = e.target.value;
         if (id === 'filter-status') state.filters.status = e.target.value;
         if (id === 'filter-type')   state.filters.type   = e.target.value;

@@ -59,39 +59,69 @@ SYSTEMS   = ["AS", "ATM", "CCW", "CD", "DW", "FG", "FGH", "FO", "FW", "GT MISC",
 REVISIONS = ["C01", "C01A", "C01B"]
 
 _SIZE_RE = re.compile(r'^(\d+(?:\s+\d+/\d+)?(?:/\d+)?)\s*"')
-SMALL_PREFIXES = ['1/2"', '3/4"', '1 1/4"', '1 1/2"', '1"', '2"']
 
-def _line_size(line_no):
+def _size_numeric(raw):
+    s = raw.rstrip('"')
+    try:
+        if ' ' in s:
+            whole, frac = s.split()
+            n, d = frac.split('/')
+            return int(whole) + int(n) / int(d)
+        elif '/' in s:
+            n, d = s.split('/')
+            return int(n) / int(d)
+        return float(s)
+    except (ValueError, ZeroDivisionError):
+        return float('inf')
+
+def _line_size_raw(line_no):
     if not line_no:
-        return ''
+        return None
     m = _SIZE_RE.match(str(line_no).strip())
     if not m:
+        return None
+    return m.group(1).strip() + '"'
+
+def _line_size(line_no):
+    raw = _line_size_raw(line_no)
+    if not raw:
         return ''
-    raw = m.group(1).strip()
-    try:
-        if ' ' in raw:
-            parts = raw.split()
-            whole = int(parts[0])
-            n, d = parts[1].split('/')
-            val = whole + int(n) / int(d)
-        elif '/' in raw:
-            n, d = raw.split('/')
-            val = int(n) / int(d)
-        else:
-            val = float(raw)
-        return 'Small' if val <= 2 else 'Large'
-    except (ValueError, ZeroDivisionError):
-        return ''
+    return 'Small' if _size_numeric(raw) <= 2 else 'Large'
 
 def _apply_size_filter(query, size):
-    if size == 'Small':
-        patterns = ','.join(f'line_no.ilike.{p}%' for p in SMALL_PREFIXES)
-        return query.or_(patterns)
-    elif size == 'Large':
-        for p in SMALL_PREFIXES:
-            query = query.filter("line_no", "not.ilike", f'{p}%')
+    if not size:
         return query
-    return query
+    return query.ilike("line_no", f'{size}%')
+
+_sizes_cache: dict = {}
+_sizes_cache_ts: dict = {}
+SIZES_CACHE_TTL = 300  # 5분
+
+def _get_distinct_sizes(table, system=None):
+    key = (table, system or "")
+    now = _time.time()
+    if key in _sizes_cache and (now - _sizes_cache_ts.get(key, 0)) < SIZES_CACHE_TTL:
+        return _sizes_cache[key]
+
+    supabase = get_client()
+    rows, page_from, page_size = [], 0, 1000
+    while True:
+        q = supabase.table(table).select("line_no")
+        if system:
+            q = q.eq("system", system)
+        res = q.range(page_from, page_from + page_size - 1).execute()
+        if not res.data:
+            break
+        rows.extend(res.data)
+        if len(res.data) < page_size:
+            break
+        page_from += page_size
+
+    sizes = {s for s in (_line_size_raw(r.get("line_no")) for r in rows) if s}
+    result = sorted(sizes, key=_size_numeric)
+    _sizes_cache[key] = result
+    _sizes_cache_ts[key] = now
+    return result
 
 _supabase_client: Client = None
 
@@ -127,6 +157,8 @@ def _invalidate_response_cache():
         _resp_cache.clear()
     _remarks_cache.clear()
     _remarks_cache_ts.clear()
+    _sizes_cache.clear()
+    _sizes_cache_ts.clear()
 
 def cached_get(fn):
     @wraps(fn)
@@ -349,7 +381,11 @@ def api_init():
             remarks = _get_distinct_remarks(TABLE_ALL)
         except Exception:
             remarks = []
-        FILTERS = {"systems": SYSTEMS, "statuses": REVISIONS, "remarks": remarks}
+        try:
+            sizes = _get_distinct_sizes(TABLE_ALL)
+        except Exception:
+            sizes = []
+        FILTERS = {"systems": SYSTEMS, "statuses": REVISIONS, "remarks": remarks, "sizes": sizes}
         DWG_COLS = "system,drawing_no,line_no,title,revision,issued_date,file_link,remark"
 
         def q_drawings():
@@ -381,11 +417,16 @@ def api_init():
 @app.route("/api/filters")
 @cached_get
 def get_filters():
+    system = request.args.get("system", "")
     try:
         remarks = _get_distinct_remarks(TABLE_ALL)
     except Exception:
         remarks = []
-    return jsonify({"systems": SYSTEMS, "statuses": REVISIONS, "remarks": remarks})
+    try:
+        sizes = _get_distinct_sizes(TABLE_ALL, system or None)
+    except Exception:
+        sizes = []
+    return jsonify({"systems": SYSTEMS, "statuses": REVISIONS, "remarks": remarks, "sizes": sizes})
 
 
 @app.route("/api/upload", methods=["POST"])
@@ -636,15 +677,21 @@ def api_support_stats():
 @app.route("/api/support/filters")
 @cached_get
 def api_support_filters():
+    system = request.args.get("system", "")
     try:
         remarks = _get_distinct_remarks(TABLE_SUPPORT)
     except Exception:
         remarks = []
+    try:
+        sizes = _get_distinct_sizes(TABLE_SUPPORT, system or None)
+    except Exception:
+        sizes = []
     return jsonify({
         "systems":   SYSTEMS,
         "types":     ["TYPICAL", "SPECIAL", "G", "GS", "U", "US", "W", "WS"],
         "revisions": ["C01", "C01A", "C01B"],
         "remarks":   remarks,
+        "sizes":     sizes,
     })
 
 
