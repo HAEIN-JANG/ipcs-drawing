@@ -475,8 +475,10 @@ def api_drawings_sync_links():
 @app.route("/api/export")
 def export_excel():
     search = request.args.get("search", "").strip()
+    system = request.args.get("system", "")
     status = request.args.get("status", "")
     size   = request.args.get("size", "")
+    remark = request.args.get("remark", "")
     try:
         supabase = get_client()
         cols = "system,drawing_no,line_no,title,revision,issued_date,bore"
@@ -489,8 +491,10 @@ def export_excel():
             if search:
                 s = search.replace(',', '\\,')
                 q = q.or_(f"drawing_no.ilike.%{s}%,line_no.ilike.%{s}%,title.ilike.%{s}%")
+            if system: q = q.eq("system", system)
             if status: q = q.eq("revision", status)
             if size:   q = _apply_size_filter(q, size)
+            if remark: q = q.eq("remark", remark)
             return q
 
         count_res = _base_query("id", count=True).limit(1).execute()

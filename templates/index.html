@@ -2443,7 +2443,8 @@
         search: state.filters.search || '',
         system: state.filters.system || '',
         status: state.filters.status || '',
-        size: state.filters.size || ''
+        size: state.filters.size || '',
+        remark: state.filters.remark || ''
       });
       window.location.href = `/api/export?${params}`;
     }
