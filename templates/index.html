@@ -571,9 +571,7 @@
     }
 
     /* Size Badge */
-    .size-badge { display: inline-block; font-size: 10px; font-weight: 600; padding: 2px 7px; border-radius: 4px; letter-spacing: .3px; }
-    .size-small { background: #e0f2fe; color: #0c4a6e; }
-    .size-large { background: #fef3c7; color: #92400e; }
+    .size-badge { display: inline-block; font-size: 10px; font-weight: 600; padding: 2px 7px; border-radius: 4px; letter-spacing: .3px; background: #f1f5f9; color: #334155; }
     .col-size { width: 70px; min-width: 70px; }
 
     /* Support Specific Columns */
@@ -1752,8 +1750,7 @@
 
         const dwgNoHtml = makeDwgLink(d.file_link, d.drawing_no);
 
-        const sizeCls = d.size === 'Small' ? 'size-small' : d.size === 'Large' ? 'size-large' : '';
-        const sizeBadge = d.size ? `<span class="size-badge ${sizeCls}">${d.size}</span>` : '—';
+        const sizeBadge = d.size ? `<span class="size-badge">${esc(d.size)}</span>` : '—';
         tableHtml += `
       <tr>
         <td class="col-no">${offset + idx + 1}</td>
@@ -1919,8 +1916,7 @@
         const rawDwg = (d.support_drawing || '').replace(/\([^)]+\)\s*$/, '').trim();
         const dwgLink = makeDwgLink(d.file_link, rawDwg);
 
-        const supSizeCls = d.size === 'Small' ? 'size-small' : d.size === 'Large' ? 'size-large' : '';
-        const supSizeBadge = d.size ? `<span class="size-badge ${supSizeCls}">${d.size}</span>` : '—';
+        const supSizeBadge = d.size ? `<span class="size-badge">${esc(d.size)}</span>` : '—';
         tableHtml += `
           <tr>
             <td class="col-sup-no">${offset + idx + 1}</td>

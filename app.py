@@ -82,12 +82,6 @@ def _line_size_raw(line_no):
         return None
     return m.group(1).strip() + '"'
 
-def _line_size(line_no):
-    raw = _line_size_raw(line_no)
-    if not raw:
-        return ''
-    return 'Small' if _size_numeric(raw) <= 2 else 'Large'
-
 def _apply_size_filter(query, size):
     if not size:
         return query
@@ -315,7 +309,7 @@ def get_drawings():
 
         res = query.order("drawing_no").range(offset, offset + per_page - 1).execute()
         for row in res.data:
-            row["size"] = _line_size(row.get("line_no"))
+            row["size"] = _line_size_raw(row.get("line_no")) or ''
             if row.get("file_link"):
                 row["file_link"] = get_cloudinary_url(row["file_link"])
 
@@ -391,7 +385,7 @@ def api_init():
         def q_drawings():
             res = supabase.table(TABLE_LATEST).select(DWG_COLS, count="exact").order("drawing_no").range(0, 19).execute()
             for row in res.data:
-                row["size"] = _line_size(row.get("line_no"))
+                row["size"] = _line_size_raw(row.get("line_no")) or ''
                 if row.get("file_link"):
                     row["file_link"] = get_cloudinary_url(row["file_link"])
             return res
@@ -726,7 +720,7 @@ def api_support_drawings():
         res = query.order("system").order("support_drawing").range(offset, offset + per_page - 1).execute()
 
         for d in res.data:
-            d["size"] = _line_size(d.get("line_no"))
+            d["size"] = _line_size_raw(d.get("line_no")) or ''
             _sanitize_link(d)
 
         return jsonify({"total": res.count, "data": res.data})
