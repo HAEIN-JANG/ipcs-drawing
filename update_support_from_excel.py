@@ -173,9 +173,6 @@ def main():
         k = strip_type(r['support_drawing'])
         db_by_stripped.setdefault(k, []).append(r)
 
-    # (support_drawing, revision) → id (새 revision INSERT 시 id 확인용)
-    db_by_sup_rev = {(r['support_drawing'], r['revision']): r['id'] for r in db_data}
-
     # system name → code 매핑 (매칭된 레코드로 역추론)
     sys_map = {}
     for stripped, excel_row in updates.items():
@@ -251,7 +248,7 @@ def main():
         for r in db_rows:
             delete_ids.append(r['id'])
 
-    print(f"\n=== 매칭 결과 ===")
+    print("\n=== 매칭 결과 ===")
     print(f"  DB upsert (기존 갱신): {len(upsert_batch):,}건")
     print(f"  DB insert (신규):      {len(insert_batch):,}건")
     print(f"  DB delete (취소선):    {len(delete_ids):,}건")
@@ -259,12 +256,12 @@ def main():
     print(f"  system 코드 미매핑:    {len(no_sys_map):,}건")
 
     if rev_changed[:5]:
-        print(f"\n  Revision 변경 샘플:")
+        print("\n  Revision 변경 샘플:")
         for k, old, new in rev_changed[:5]:
             print(f"    {k}: {old} → {new}")
 
     if no_sys_map[:5]:
-        print(f"\n  system 미매핑 샘플 (신규 레코드 system 공백 가능):")
+        print("\n  system 미매핑 샘플 (신규 레코드 system 공백 가능):")
         for k, name in no_sys_map[:5]:
             print(f"    {k} | {name}")
 

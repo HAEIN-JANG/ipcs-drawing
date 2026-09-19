@@ -3,7 +3,6 @@ Valve Drawing List → Supabase valve_master 업로드 스크립트
 실행: python upload_valve_data.py
 """
 
-import os
 import sys
 import openpyxl
 from datetime import datetime
