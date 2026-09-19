@@ -3,6 +3,7 @@ import os
 import re
 import io
 import time as _time
+import httpx
 import pandas as pd
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor
@@ -27,7 +28,8 @@ def _load_env():
 _load_env()
 
 template_dir = os.path.abspath(os.path.dirname(__file__))
-app = Flask(__name__, template_folder=template_dir, static_folder=template_dir)
+# static_folder 를 프로젝트 루트로 두면 .env·app.py 등 모든 파일이 /<폴더명>/ 경로로 내려가므로 정적 서빙을 끈다(정적 파일은 쓰지 않음).
+app = Flask(__name__, template_folder=template_dir, static_folder=None)
 
 try:
     from flask_compress import Compress
@@ -87,6 +89,17 @@ def _apply_size_filter(query, size):
         return query
     return query.ilike("line_no", f'{size}%')
 
+def _apply_iso_filters(query, search, system, status, size, remark):
+    # ISO 목록·엑셀 내보내기·인쇄가 같은 조건으로 조회되도록 필터를 한곳에서 적용한다.
+    if search:
+        s = search.replace(',', '\\,')
+        query = query.or_(f"drawing_no.ilike.%{s}%,line_no.ilike.%{s}%,title.ilike.%{s}%,system.ilike.%{s}%")
+    if system: query = query.eq("system", system)
+    if status: query = query.eq("revision", status)
+    if size:   query = _apply_size_filter(query, size)
+    if remark: query = query.eq("remark", remark)
+    return query
+
 _sizes_cache: dict = {}
 _sizes_cache_ts: dict = {}
 SIZES_CACHE_TTL = 300  # 5분
@@ -97,20 +110,7 @@ def _get_distinct_sizes(table, system=None):
     if key in _sizes_cache and (now - _sizes_cache_ts.get(key, 0)) < SIZES_CACHE_TTL:
         return _sizes_cache[key]
 
-    supabase = get_client()
-    rows, page_from, page_size = [], 0, 1000
-    while True:
-        q = supabase.table(table).select("line_no")
-        if system:
-            q = q.eq("system", system)
-        res = q.range(page_from, page_from + page_size - 1).execute()
-        if not res.data:
-            break
-        rows.extend(res.data)
-        if len(res.data) < page_size:
-            break
-        page_from += page_size
-
+    rows = _fetch_all_paginated(get_client(), table, "line_no", eq=("system", system) if system else None)
     sizes = {s for s in (_line_size_raw(r.get("line_no")) for r in rows) if s}
     result = sorted(sizes, key=_size_numeric)
     _sizes_cache[key] = result
@@ -119,13 +119,26 @@ def _get_distinct_sizes(table, system=None):
 
 _supabase_client: Client = None
 
+def _use_http1(client: Client):
+    # 하나의 HTTP/2 연결을 여러 스레드가 공유하면 간헐적으로 ReadError(WinError 10035)가 나므로
+    # PostgREST 세션을 스레드마다 별도 연결을 쓰는 HTTP/1.1 세션으로 교체한다.
+    try:
+        old = client.postgrest.session
+        client.postgrest.session = httpx.Client(base_url=old.base_url, headers=old.headers, timeout=old.timeout,
+                                                follow_redirects=old.follow_redirects, http2=False)
+        old.close()
+    except AttributeError:
+        pass  # 라이브러리 내부 구조가 다르면 기본 세션 유지
+
 def get_client() -> Client:
     global _supabase_client
     if _supabase_client is not None:
         return _supabase_client
     if not SUPABASE_URL or not SUPABASE_KEY:
         raise ValueError("SUPABASE_URL, SUPABASE_KEY를 확인하세요.")
-    _supabase_client = create_client(SUPABASE_URL, SUPABASE_KEY, options=ClientOptions(schema="drawing"))
+    client = create_client(SUPABASE_URL, SUPABASE_KEY, options=ClientOptions(schema="drawing"))
+    _use_http1(client)
+    _supabase_client = client
     return _supabase_client
 
 _stats_cache = None
@@ -145,6 +158,7 @@ from functools import wraps
 _resp_cache: dict = {}
 _resp_cache_lock = threading.Lock()
 RESP_CACHE_TTL = 1800  # 30분 — 무효화를 놓쳤을 때를 대비한 안전망
+RESP_CACHE_MAX = 500   # 검색어마다 키가 생겨 무한히 늘지 않도록 상한을 두고, 넘으면 비운다
 
 def _invalidate_response_cache():
     with _resp_cache_lock:
@@ -168,6 +182,8 @@ def cached_get(fn):
         if status == 200:
             try:
                 with _resp_cache_lock:
+                    if len(_resp_cache) >= RESP_CACHE_MAX:
+                        _resp_cache.clear()
                     _resp_cache[key] = (now, body.get_json())
             except Exception:
                 pass
@@ -227,16 +243,22 @@ def _fetch_cloudinary_all(resource_type="image"):
             break
     return uploaded
 
-def _fetch_all_paginated(supabase, table, columns, page_size=1000):
-    rows, page_from = [], 0
-    while True:
-        res = supabase.table(table).select(columns).range(page_from, page_from + page_size - 1).execute()
-        if not res.data:
-            break
-        rows.extend(res.data)
-        if len(res.data) < page_size:
-            break
-        page_from += page_size
+def _fetch_all_paginated(supabase, table, columns, page_size=1000, not_null=None, eq=None):
+    # Supabase 1000행 제한 때문에 나눠 읽는다. 첫 페이지에서 전체 건수를 받고 나머지는 병렬로 조회한다.
+    # not_null(컬럼명) / eq((컬럼, 값))으로 서버에서 미리 거르면 읽는 행 수가 크게 줄어든다.
+    def page(offset, count=None):
+        q = supabase.table(table).select(columns, count=count)
+        if not_null: q = q.not_.is_(not_null, "null")
+        if eq:       q = q.eq(*eq)
+        return q.order("id").range(offset, offset + page_size - 1).execute()
+
+    first = page(0, "exact")
+    rows = list(first.data)
+    offsets = range(page_size, first.count or 0, page_size)
+    if offsets:
+        with ThreadPoolExecutor(max_workers=4) as ex:
+            for res in ex.map(page, offsets):
+                rows.extend(res.data)
     return rows
 
 def _assign_sequential_ids(supabase, table, batch, key_cols):
@@ -297,15 +319,8 @@ def get_drawings():
 
         supabase = get_client()
         target   = TABLE_LATEST if status == "" else TABLE_ALL
-        query    = supabase.table(target).select("*", count="exact")
-
-        if search:
-            s = search.replace(',', '\\,')
-            query = query.or_(f"drawing_no.ilike.%{s}%,line_no.ilike.%{s}%,title.ilike.%{s}%,system.ilike.%{s}%")
-        if system: query = query.eq("system", system)
-        if status: query = query.eq("revision", status)
-        if size:   query = _apply_size_filter(query, size)
-        if remark: query = query.eq("remark", remark)
+        query    = _apply_iso_filters(supabase.table(target).select("*", count="exact"),
+                                      search, system, status, size, remark)
 
         res = query.order("drawing_no").range(offset, offset + per_page - 1).execute()
         for row in res.data:
@@ -357,8 +372,7 @@ def _get_distinct_remarks(table):
     if table in _remarks_cache and (now - _remarks_cache_ts.get(table, 0)) < REMARKS_CACHE_TTL:
         return _remarks_cache[table]
 
-    supabase = get_client()
-    rows = _fetch_all_paginated(supabase, table, "remark")
+    rows = _fetch_all_paginated(get_client(), table, "remark", not_null="remark")
     result = sorted({row["remark"] for row in rows if row.get("remark")})
     _remarks_cache[table] = result
     _remarks_cache_ts[table] = now
@@ -522,15 +536,8 @@ def export_excel():
 
         def _base_query(select_cols, count=False):
             kw = {"count": "exact"} if count else {}
-            q = supabase.table(target).select(select_cols, **kw)
-            if search:
-                s = search.replace(',', '\\,')
-                q = q.or_(f"drawing_no.ilike.%{s}%,line_no.ilike.%{s}%,title.ilike.%{s}%")
-            if system: q = q.eq("system", system)
-            if status: q = q.eq("revision", status)
-            if size:   q = _apply_size_filter(q, size)
-            if remark: q = q.eq("remark", remark)
-            return q
+            return _apply_iso_filters(supabase.table(target).select(select_cols, **kw),
+                                      search, system, status, size, remark)
 
         count_res = _base_query("id", count=True).limit(1).execute()
         total = count_res.count or 0
@@ -563,16 +570,12 @@ def print_drawings():
         search = request.args.get("search", "").strip()
         system = request.args.get("system", "").strip()
         status = request.args.get("status", "").strip()
+        size   = request.args.get("size", "").strip()
+        remark = request.args.get("remark", "").strip()
         target = TABLE_LATEST if status == "" else TABLE_ALL
 
         def build_query(base_q):
-            q = base_q
-            if search:
-                s = search.replace(',', '\\,')
-                q = q.or_(f"drawing_no.ilike.%{s}%,line_no.ilike.%{s}%,title.ilike.%{s}%")
-            if system: q = q.eq("system", system)
-            if status: q = q.eq("revision", status)
-            return q
+            return _apply_iso_filters(base_q, search, system, status, size, remark)
 
         count_res = build_query(supabase.table(target).select("id", count="exact")).limit(1).execute()
         total = count_res.count if hasattr(count_res, "count") else 0
