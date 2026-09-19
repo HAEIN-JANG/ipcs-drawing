@@ -56,7 +56,7 @@ TABLE_MARKED_PID = "marked_pid_master"
 
 SYSTEMS   = ["AS", "ATM", "CCW", "CD", "DW", "FG", "FGH", "FO", "FW", "GT MISC",
              "HP", "HW", "IA", "LO", "LP", "N2", "PW", "RW", "SA", "SS", "ST MISC", "SW", "WWT"]
-REVISIONS = ["C01", "C01A", "C01B", "VOID"]
+REVISIONS = ["C01", "C01A", "C01B", "C01C", "C03", "VOID"]
 
 _SIZE_RE = re.compile(r'^(\d+(?:\s+\d+/\d+)?(?:/\d+)?)\s*"')
 
