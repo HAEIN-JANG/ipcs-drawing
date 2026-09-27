@@ -183,11 +183,12 @@
 
     /* ─── Top Header ─────────────────────────────── */
     .top-header {
-      height: var(--header-h);
+      min-height: var(--header-h);
+      /* Revision 칩이 여러 줄이 되면 헤더가 늘어나도록(숫자 잘림 방지) */
       background: #ffffff;
       display: flex;
       align-items: center;
-      padding: 0 24px;
+      padding: 6px 24px;
       gap: 16px;
       z-index: 100;
       border-bottom: 1px solid var(--border);
@@ -508,7 +509,9 @@
       letter-spacing: .5px;
       text-transform: uppercase;
       color: var(--text-muted);
-      white-space: nowrap;
+      white-space: normal;
+      word-break: keep-all;
+      line-height: 1.25;
     }
 
     tbody tr {
@@ -529,87 +532,56 @@
       color: var(--text);
     }
 
-    /* 컬럼 너비 조정 */
-    .col-no {
-      width: 50px;
-      min-width: 50px;
-    }
-
-    .col-sys {
-      width: 120px;
-      min-width: 120px;
-    }
-
-    .col-dwg {
-      width: 300px;
-      min-width: 300px;
-    }
-
-    .col-line {
-      width: 300px;
-      min-width: 300px;
-    }
-
-    .col-title {
-      width: auto;
-      min-width: 300px;
-      text-align: center;
-    }
-
-    .col-rev {
-      width: 120px;
-      min-width: 120px;
-    }
-
-    .col-date {
-      width: 120px;
-      min-width: 120px;
-    }
-
-    .col-remark {
-      width: 140px;
-      min-width: 140px;
-    }
+    /* 컬럼 너비 — 해상도 대응(2026-09-27): 예전엔 칸마다 큰 min-width(ISO 합계 약 1,520px)를 둬서
+       1366px 화면에서 제목·REV·날짜가 가로 스크롤 밖으로 밀렸다. 번호·날짜처럼 짧은 칸은 좁게 고정하고
+       도면·라인 번호는 한 줄 유지, 제목·비고·설명은 남는 폭에서 줄을 바꾼다. */
+    .col-no     { width: 44px; }
+    .col-sys    { width: 72px; }
+    .col-size   { width: 60px; }
+    .col-dwg    { white-space: nowrap; }
+    .col-line   { white-space: nowrap; }
+    .col-title  { min-width: 180px; }
+    .col-rev    { width: 72px; }
+    .col-date   { width: 92px; white-space: nowrap; }
+    .col-remark { width: 120px; }
 
     /* Size Badge */
-    .size-badge { display: inline-block; font-size: 10px; font-weight: 600; padding: 2px 7px; border-radius: 4px; letter-spacing: .3px; background: #f1f5f9; color: #334155; }
-    .col-size { width: 70px; min-width: 70px; }
+    .size-badge { display: inline-block; font-size: 10px; font-weight: 600; padding: 2px 7px; border-radius: 4px; letter-spacing: .3px; background: #f1f5f9; color: #334155; white-space: nowrap; }
 
     /* Support Specific Columns */
-    .col-sup-no { width: 40px; min-width: 40px; }
-    .col-sup-sys { width: 60px; min-width: 60px; }
-    .col-sup-dwg { width: 220px; min-width: 200px; }
-    .col-sup-type { width: 100px; min-width: 100px; }
-    .col-sup-iso { width: 180px; min-width: 180px; }
-    .col-sup-line { width: 180px; min-width: 180px; }
-    .col-sup-ch { width: 70px; min-width: 60px; }
-    .col-sup-lx { width: 40px; min-width: 35px; }
-    .col-sup-rev { width: 60px; min-width: 60px; }
-    .col-sup-date { width: 80px; min-width: 80px; }
-    .col-sup-remark { width: 140px; min-width: 140px; }
+    .col-sup-no     { width: 40px; }
+    .col-sup-sys    { width: 56px; }
+    .col-sup-dwg    { white-space: nowrap; }
+    .col-sup-type   { width: 80px; white-space: nowrap; }
+    .col-sup-iso    { white-space: nowrap; }
+    .col-sup-line   { white-space: nowrap; }
+    .col-sup-ch     { width: 56px; }
+    .col-sup-lx     { width: 38px; }
+    .col-sup-rev    { width: 60px; }
+    .col-sup-date   { width: 86px; white-space: nowrap; }
+    .col-sup-remark { width: 110px; }
 
     /* Speciality Specific Columns */
-    .col-spc-no     { width: 40px;  min-width: 40px; text-align: center; }
-    .col-spc-dwg    { width: 300px; min-width: 260px; }
-    .col-spc-title  { width: 280px; min-width: 220px; }
-    .col-spc-vendor { width: 150px; min-width: 120px; }
-    .col-spc-class  { width: 120px; min-width: 90px; }
-    .col-spc-conn   { width: 200px; min-width: 160px; }
-    .col-spc-rev    { width: 65px;  min-width: 65px; }
-    .col-spc-date   { width: 110px; min-width: 100px; white-space: nowrap; }
+    .col-spc-no     { width: 40px; text-align: center; }
+    .col-spc-dwg    { white-space: nowrap; }
+    .col-spc-title  { min-width: 160px; }
+    .col-spc-vendor { width: 120px; }
+    .col-spc-class  { width: 70px; }
+    .col-spc-conn   { width: 110px; }
+    .col-spc-rev    { width: 65px; }
+    .col-spc-date   { width: 92px; white-space: nowrap; }
 
-    /* PID Specific Columns */
-    .col-pid-no   { width: 66px;  min-width: 66px;  text-align: center; }
-    .col-pid-sys  { width: 330px; min-width: 280px; text-align: center; }
-    .col-pid-dwg  { width: 500px; min-width: 420px; }
-    .col-pid-rev  { width: 172px; min-width: 150px; text-align: center; }
-    .col-pid-date { width: 200px; min-width: 180px; text-align: center; white-space: nowrap; }
+    /* PID·Valve Specific Columns */
+    .col-pid-no   { width: 50px; text-align: center; }
+    .col-pid-sys  { width: 18%; text-align: center; }
+    .col-pid-dwg  { white-space: nowrap; }
+    .col-pid-rev  { width: 80px; text-align: center; }
+    .col-pid-date { width: 100px; text-align: center; white-space: nowrap; }
 
     /* Marked PID Specific Columns */
-    .col-mpid-sys  { width: 90px;  min-width: 80px;  text-align: center; }
-    .col-mpid-dwg  { width: 220px; min-width: 180px; }
-    .col-mpid-desc { white-space: nowrap; }
-    .col-mpid-date { width: 110px; min-width: 100px; text-align: center; white-space: nowrap; }
+    .col-mpid-sys  { width: 80px; text-align: center; }
+    .col-mpid-dwg  { white-space: nowrap; }
+    .col-mpid-date { width: 92px; text-align: center; white-space: nowrap; }
 
     /* PDF & DWG Special Styles */
     .pdf-btn {
@@ -1069,7 +1041,7 @@
     .btn-sync:disabled { opacity: .6; cursor: not-allowed; }
 
     /* 헤더 Revision 분포 */
-    .hstat-revs { display: flex; flex-wrap: wrap; gap: 4px; max-width: 360px; align-items: center; }
+    .hstat-revs { display: flex; flex-wrap: wrap; gap: 4px; max-width: 420px; align-items: center; }
     .rev-chip { font-family: var(--font-mono); font-size: 10px; padding: 2px 6px; border-radius: 4px; white-space: nowrap; }
     .rev-chip b { font-weight: 600; margin-left: 3px; }
     .rev-red { background: #fee2e2; color: #991b1b; }
@@ -1103,6 +1075,51 @@
     .health-title { font-size: 13px; font-weight: 600; }
     .health-desc { font-size: 11px; color: var(--text-muted); flex: 1; }
     .health-card .btn { align-self: flex-start; }
+
+    /* ── 해상도 대응 (2026-09-27, ipcs-control과 같은 방식) ──
+       1600px 이하: 여백·셀 패딩 축소 / 1440px 이하: 사이드바 축소, 보조 버튼은 아이콘만(title로 이름 표시)
+       1280px 이하: 부제·헤더 숫자 축소 / 1100px 이하: 사이드바 아이콘만, Revision 칩 숨김 */
+    @media (max-width: 1600px) {
+      .top-header { padding: 6px 16px; gap: 12px; }
+      .toolbar { padding: 8px 16px; }
+      .results-bar { padding: 6px 16px; }
+      .main { padding: 10px 16px 0; }
+      thead th { padding: 7px 6px; letter-spacing: .3px; }
+      tbody td { padding: 8px 6px; }
+      .search-wrap { min-width: 200px; }
+      .filter-select { min-width: 110px; }
+      .header-stats { gap: 14px; }
+    }
+    @media (max-width: 1440px) {
+      .sidebar { width: 200px; min-width: 200px; }
+      .sidebar-header { padding: 18px 16px; }
+      .nav-label { padding: 0 16px 8px; }
+      .nav-item { padding: 10px 16px; gap: 10px; }
+      .toolbar-right .btn-ghost .btn-label { display: none; }
+      .toolbar-right .btn-ghost { padding: 0 10px; }
+      .hstat-revs { max-width: 330px; }
+      .sidebar-logo { font-size: 14px; white-space: nowrap; }
+    }
+    @media (max-width: 1280px) {
+      .header-subtitle { display: none; }
+      .hstat-val { font-size: 14px; }
+      .filter-select { min-width: 96px; padding-right: 24px; }
+      .col-sup-remark { width: 90px; }
+      .col-sup-ch { width: 48px; }
+      .col-sup-line { white-space: normal; }
+    }
+    @media (max-width: 1100px) {
+      .sidebar { width: 60px; min-width: 60px; }
+      .sidebar-header { padding: 14px 0; display: flex; justify-content: center; }
+      .sidebar-logo-text, .nav-label { display: none; }
+      .nav-item { font-size: 0; justify-content: center; padding: 12px 0; gap: 0; }
+      .hstat-revs { display: none; }
+      .toolbar-right .btn-label, .btn-sync .btn-label { display: none; }
+      .search-wrap { min-width: 160px; }
+      .col-sup-iso, .col-sup-line { white-space: normal; }   /* 칸이 많은 Support 표는 번호를 '-'에서 줄바꿈 */
+      .col-sup-iso { min-width: 140px; }
+      .col-sup-remark { width: 70px; }
+    }
   </style>
 </head>
 
@@ -1114,45 +1131,45 @@
       <div class="sidebar-header">
         <div class="sidebar-logo">
           <div class="sidebar-logo-icon">IP</div>
-          IPCS DASHBOARD
+          <span class="sidebar-logo-text">IPCS DASHBOARD</span>
         </div>
       </div>
       <div class="sidebar-nav">
         <div class="nav-label">MONITORING</div>
-        <div class="nav-item" data-cat="pid" onclick="switchCategory('pid')">
+        <div class="nav-item" data-cat="pid" title="PID Drawing" onclick="switchCategory('pid')">
           <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/>
           </svg>
           PID Drawing
         </div>
-        <div class="nav-item active" data-cat="iso" onclick="switchCategory('iso')">
+        <div class="nav-item active" data-cat="iso" title="ISO Drawing" onclick="switchCategory('iso')">
           <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
             <polyline points="14 2 14 8 20 8" />
           </svg>
           ISO Drawing
         </div>
-        <div class="nav-item" data-cat="support" onclick="switchCategory('support')">
+        <div class="nav-item" data-cat="support" title="Support Drawing" onclick="switchCategory('support')">
           <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
             <line x1="9" y1="3" x2="9" y2="21" />
           </svg>
           Support Drawing
         </div>
-        <div class="nav-item" data-cat="valve" onclick="switchCategory('valve')">
+        <div class="nav-item" data-cat="valve" title="Valve Drawing" onclick="switchCategory('valve')">
           <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <circle cx="12" cy="12" r="10" />
             <path d="M12 8l4 4-4 4M8 12h8" />
           </svg>
           Valve Drawing
         </div>
-        <div class="nav-item" data-cat="speciality" onclick="switchCategory('speciality')">
+        <div class="nav-item" data-cat="speciality" title="Speciality Drawing" onclick="switchCategory('speciality')">
           <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" />
           </svg>
           Speciality Drawing
         </div>
-        <div class="nav-item" data-cat="markedpid" onclick="switchCategory('markedpid')">
+        <div class="nav-item" data-cat="markedpid" title="Marked PID" onclick="switchCategory('markedpid')">
           <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M12 20h9" />
             <path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" />
@@ -1161,7 +1178,7 @@
         </div>
 
         <div class="nav-label">QUALITY</div>
-        <div class="nav-item" data-cat="health" onclick="switchCategory('health')">
+        <div class="nav-item" data-cat="health" title="Data Health" onclick="switchCategory('health')">
           <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M22 12h-4l-3 9L9 3l-3 9H2" />
           </svg>
@@ -1193,8 +1210,8 @@
           </div>
           <div class="hstat-revs" id="stat-revs"></div>
           <div class="actions">
-            <button class="btn-sync" onclick="runSyncLinks()" id="btn-sync">
-              <i class="fas fa-sync-alt"></i> Sync Links
+            <button class="btn-sync" onclick="runSyncLinks()" id="btn-sync" title="Sync PDF links from Cloudinary">
+              <i class="fas fa-sync-alt"></i> <span class="btn-label">Sync Links</span>
             </button>
           </div>
         </div>
@@ -1247,36 +1264,36 @@
     </button>
 
     <div class="toolbar-right">
-      <button class="btn btn-primary" onclick="openUploadModal()">
+      <button class="btn btn-primary" onclick="openUploadModal()" title="Upload Excel">
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
           <polyline points="17 8 12 3 7 8" />
           <line x1="12" y1="3" x2="12" y2="15" />
         </svg>
-        Upload Excel
+        <span class="btn-label">Upload Excel</span>
       </button>
-      <button class="btn btn-ghost" onclick="handleExportExcel()">
+      <button class="btn btn-ghost" onclick="handleExportExcel()" title="Export Excel">
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
           <polyline points="7 10 12 15 17 10" />
           <line x1="12" y1="15" x2="12" y2="3" />
         </svg>
-        Export Excel
+        <span class="btn-label">Export Excel</span>
       </button>
-      <button class="btn btn-ghost" onclick="handlePrintReport()">
+      <button class="btn btn-ghost" onclick="handlePrintReport()" title="Print">
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <polyline points="6 9 6 2 18 2 18 9" />
           <path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2" />
           <rect x="6" y="14" width="12" height="8" />
         </svg>
-        Print
+        <span class="btn-label">Print</span>
       </button>
-      <button class="btn btn-ghost" id="btn-register" onclick="openRegisterModal()">
+      <button class="btn btn-ghost" id="btn-register" onclick="openRegisterModal()" title="Issue Register">
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <rect x="3" y="4" width="18" height="18" rx="2" />
           <path d="M16 2v4M8 2v4M3 10h18" />
         </svg>
-        Issue Register
+        <span class="btn-label">Issue Register</span>
       </button>
     </div>
   </div>
