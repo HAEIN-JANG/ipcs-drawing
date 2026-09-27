@@ -532,56 +532,58 @@
       color: var(--text);
     }
 
-    /* 컬럼 너비 — 해상도 대응(2026-09-27): 예전엔 칸마다 큰 min-width(ISO 합계 약 1,520px)를 둬서
-       1366px 화면에서 제목·REV·날짜가 가로 스크롤 밖으로 밀렸다. 번호·날짜처럼 짧은 칸은 좁게 고정하고
-       도면·라인 번호는 한 줄 유지, 제목·비고·설명은 남는 폭에서 줄을 바꾼다. */
-    .col-no     { width: 44px; }
-    .col-sys    { width: 72px; }
-    .col-size   { width: 60px; }
-    .col-dwg    { white-space: nowrap; }
-    .col-line   { white-space: nowrap; }
-    .col-title  { min-width: 180px; }
-    .col-rev    { width: 72px; }
-    .col-date   { width: 92px; white-space: nowrap; }
-    .col-remark { width: 120px; }
+    /* 컬럼 너비 — 모든 칸에 비율(%)을 줘서 남는 폭을 고르게 나눈다(예전엔 제목 칸 하나가 남는 폭을 전부 차지).
+       도면·라인 번호처럼 한 줄 유지(nowrap)하는 칸은 좁은 화면에서 비율보다 넓어질 수 있어 가로 스크롤이 생기지 않는다.
+       (2026-09-27 해상도 대응: 예전 min-width 합계 약 1,520px 때문에 1366px에서 칸이 화면 밖으로 밀렸다) */
+    .col-no     { width: 4%; }
+    .col-sys    { width: 7%; }
+    .col-size   { width: 6%; }
+    .col-dwg    { width: 17%; white-space: nowrap; }
+    .col-line   { width: 17%; white-space: nowrap; }
+    .col-title  { width: 25%; }
+    .col-rev    { width: 7%; }
+    .col-date   { width: 8%; white-space: nowrap; }
+    .col-remark { width: 9%; }
 
     /* Size Badge */
     .size-badge { display: inline-block; font-size: 10px; font-weight: 600; padding: 2px 7px; border-radius: 4px; letter-spacing: .3px; background: #f1f5f9; color: #334155; white-space: nowrap; }
 
     /* Support Specific Columns */
-    .col-sup-no     { width: 40px; }
-    .col-sup-sys    { width: 56px; }
-    .col-sup-dwg    { white-space: nowrap; }
-    .col-sup-type   { width: 80px; white-space: nowrap; }
-    .col-sup-iso    { white-space: nowrap; }
-    .col-sup-line   { white-space: nowrap; }
-    .col-sup-ch     { width: 56px; }
-    .col-sup-lx     { width: 38px; }
-    .col-sup-rev    { width: 60px; }
-    .col-sup-date   { width: 86px; white-space: nowrap; }
-    .col-sup-remark { width: 110px; }
+    .col-sup-no     { width: 3%; }
+    .col-sup-sys    { width: 5%; }
+    .col-sup-dwg    { width: 14%; white-space: nowrap; }
+    .col-sup-type   { width: 7%; white-space: nowrap; }
+    .col-sup-iso    { width: 14%; white-space: nowrap; }
+    .col-sup-line   { width: 14%; white-space: nowrap; }
+    .col-sup-ch     { width: 5%; }
+    .col-sup-lx     { width: 4%; }
+    .col-sup-rev    { width: 5%; }
+    .col-sup-date   { width: 7%; white-space: nowrap; }
+    .col-sup-remark { width: 6%; }
 
     /* Speciality Specific Columns */
-    .col-spc-no     { width: 40px; text-align: center; }
-    .col-spc-dwg    { white-space: nowrap; }
-    .col-spc-title  { min-width: 160px; }
-    .col-spc-vendor { width: 120px; }
-    .col-spc-class  { width: 70px; }
-    .col-spc-conn   { width: 110px; }
-    .col-spc-rev    { width: 65px; }
-    .col-spc-date   { width: 92px; white-space: nowrap; }
+    .col-spc-no     { width: 5%; text-align: center; }
+    .col-spc-dwg    { width: 20%; white-space: nowrap; }
+    .col-spc-title  { width: 22%; }
+    .col-spc-vendor { width: 14%; }
+    .col-spc-class  { width: 9%; }
+    .col-spc-conn   { width: 12%; }
+    .col-spc-rev    { width: 8%; }
+    .col-spc-date   { width: 10%; white-space: nowrap; }
 
     /* PID·Valve Specific Columns */
-    .col-pid-no   { width: 50px; text-align: center; }
-    .col-pid-sys  { width: 18%; text-align: center; }
-    .col-pid-dwg  { white-space: nowrap; }
-    .col-pid-rev  { width: 80px; text-align: center; }
-    .col-pid-date { width: 100px; text-align: center; white-space: nowrap; }
+    .col-pid-no    { width: 6%; text-align: center; }
+    .col-pid-sys   { width: 16%; text-align: center; }
+    .col-pid-dwg   { width: 24%; white-space: nowrap; }
+    .col-pid-title { width: 30%; text-align: center; }
+    .col-pid-rev   { width: 12%; text-align: center; }
+    .col-pid-date  { width: 12%; text-align: center; white-space: nowrap; }
 
-    /* Marked PID Specific Columns */
-    .col-mpid-sys  { width: 80px; text-align: center; }
-    .col-mpid-dwg  { white-space: nowrap; }
-    .col-mpid-date { width: 92px; text-align: center; white-space: nowrap; }
+    /* Marked PID Specific Columns (NO.는 col-pid-no 6%) */
+    .col-mpid-sys  { width: 10%; text-align: center; }
+    .col-mpid-dwg  { width: 22%; white-space: nowrap; }
+    .col-mpid-desc { width: 28%; }
+    .col-mpid-date { width: 12%; text-align: center; white-space: nowrap; }
 
     /* PDF & DWG Special Styles */
     .pdf-btn {
@@ -1785,7 +1787,7 @@
                 <th class="col-pid-no">NO.</th>
                 <th class="col-pid-sys">ITEM</th>
                 <th class="col-pid-dwg">DRAWING NO.</th>
-                <th style="text-align:center;">TITLE</th>
+                <th class="col-pid-title">TITLE</th>
                 <th class="col-pid-rev">REV.</th>
                 <th class="col-pid-date">DATE</th>
               </tr>
@@ -1799,7 +1801,7 @@
             <td class="col-pid-no">${offset + idx + 1}</td>
             <td class="col-pid-sys">${esc(d.valve) || '—'}</td>
             <td class="col-pid-dwg">${makeDwgLink(d.file_link, d.drawing_no)}</td>
-            <td style="text-align:center;">${esc(d.title) || '—'}</td>
+            <td class="col-pid-title">${esc(d.title) || '—'}</td>
             <td class="col-pid-rev">${revBadge(d.revision)}</td>
             <td class="col-pid-date">${esc((d.issued_date || '').substring(0, 10)) || '—'}</td>
           </tr>
@@ -1865,7 +1867,7 @@
                 <th class="col-pid-no">NO.</th>
                 <th class="col-pid-sys">SYSTEM</th>
                 <th class="col-pid-dwg">DRAWING NO.</th>
-                <th style="text-align:center;">TITLE</th>
+                <th class="col-pid-title">TITLE</th>
                 <th class="col-pid-rev">REV.</th>
                 <th class="col-pid-date">DATE</th>
               </tr>
@@ -1879,7 +1881,7 @@
             <td class="col-pid-no">${offset + idx + 1}</td>
             <td class="col-pid-sys">${esc(d.system) || '—'}</td>
             <td class="col-pid-dwg">${makeDwgLink(d.file_link, d.drawing_no)}</td>
-            <td style="text-align:center;">${esc(d.title) || '—'}</td>
+            <td class="col-pid-title">${esc(d.title) || '—'}</td>
             <td class="col-pid-rev">${revBadge(d.revision)}</td>
             <td class="col-pid-date">${esc((d.issued_date || '').substring(0, 10)) || '—'}</td>
           </tr>

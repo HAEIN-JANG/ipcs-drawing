@@ -51,3 +51,4 @@ ALTER TABLE drawing.marked_pid_master  ADD COLUMN IF NOT EXISTS updated_at times
   - 1100px 이하: 사이드바를 아이콘만 남긴 60px로 줄이고 Revision 칩을 숨긴다. Support ISO 번호도 줄바꿈한다.
 - 헤더: Support의 Revision 칩 9개가 여러 줄이 되면 고정 높이(56px) 밖으로 넘쳐 TOTAL 숫자가 잘렸다. 헤더 높이를 `min-height`로 바꿔 내용에 맞춰 늘어나게 했다.
 - 남은 것: 1024~1280px에서 Support 공통 도면(System ALL) 8행은 ISO DRAWING 칸의 긴 설명 때문에 행이 여러 줄로 높아진다(가로 넘침은 없음).
+- 균등 배분(2026-09-28, 사용자 지적 "한쪽으로 치우침"): 짧은 칸만 px로 고정하자, 폭이 정해지지 않은 제목 칸 하나가 남는 폭을 전부 가져갔다(Valve에서 TITLE이 화면 절반, REV·DATE는 오른쪽 끝에 몰림). 모든 칸에 비율(%)을 주었다. 예) Valve·PID = NO 6 / ITEM·SYSTEM 16 / DWG 24 / TITLE 30 / REV 12 / DATE 12. 한 줄 유지 칸은 좁은 화면에서 비율보다 넓어질 수 있어, 1920/1366/1024px 모두 가로 넘침 0을 유지한다.
