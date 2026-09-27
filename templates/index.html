@@ -5,6 +5,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>IPCS — ISO Drawing Control System</title>
+  <link rel="icon" href="data:,">
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link
     href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap"
@@ -805,7 +806,8 @@
       width: 480px;
       max-width: 94vw;
       box-shadow: 0 20px 60px rgba(0, 0, 0, .25);
-      overflow: hidden;
+      max-height: 94vh;
+      overflow: auto;
     }
 
     .modal-header {
@@ -968,7 +970,7 @@
 
     .result-grid {
       display: grid;
-      grid-template-columns: repeat(3, 1fr);
+      grid-template-columns: repeat(auto-fit, minmax(72px, 1fr));
       gap: 8px;
       margin-top: 10px;
     }
@@ -1065,6 +1067,42 @@
     }
     .btn-sync:hover { background: #0a6438; }
     .btn-sync:disabled { opacity: .6; cursor: not-allowed; }
+
+    /* 헤더 Revision 분포 */
+    .hstat-revs { display: flex; flex-wrap: wrap; gap: 4px; max-width: 360px; align-items: center; }
+    .rev-chip { font-family: var(--font-mono); font-size: 10px; padding: 2px 6px; border-radius: 4px; white-space: nowrap; }
+    .rev-chip b { font-weight: 600; margin-left: 3px; }
+    .rev-red { background: #fee2e2; color: #991b1b; }
+    button.rev-badge { border: none; cursor: pointer; }
+    button.rev-badge:hover { outline: 1px solid currentColor; }
+
+    /* Revision 이력·발행 대장 모달 */
+    .modal.modal-wide { width: 760px; }
+    .modal-note { font-size: 12px; color: var(--text-muted); margin-bottom: 12px; }
+    .date-row { display: flex; gap: 12px; }
+    .date-row label { font-size: 12px; color: var(--text-muted); display: flex; align-items: center; gap: 6px; }
+    .history-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+    .history-table th, .history-table td { border-bottom: 1px solid var(--border); padding: 7px 8px; text-align: left; }
+    .history-table th { font-size: 10px; color: var(--text-muted); letter-spacing: .5px; }
+
+    /* 업로드 미리보기 */
+    .preview-list { margin-top: 10px; max-height: 180px; overflow: auto; font-size: 11px; line-height: 1.6; }
+    .preview-list .kind { display: inline-block; min-width: 58px; font-weight: 600; }
+    .preview-list .diff { color: var(--text-muted); margin-left: 58px; }
+
+    /* Data Health */
+    .health-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; }
+    .health-head p { font-size: 12px; color: var(--text-muted); }
+    .health-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 12px; }
+    .health-card { background: var(--surface); border: 1px solid var(--border); border-left: 4px solid var(--green);
+                   border-radius: var(--radius); padding: 14px; display: flex; flex-direction: column; gap: 6px; }
+    .health-card.warn { border-left-color: #d97706; }
+    .health-count { font-family: var(--font-mono); font-size: 22px; font-weight: 600; }
+    .health-card.warn .health-count { color: #b45309; }
+    .health-card.ok .health-count { color: var(--green); }
+    .health-title { font-size: 13px; font-weight: 600; }
+    .health-desc { font-size: 11px; color: var(--text-muted); flex: 1; }
+    .health-card .btn { align-self: flex-start; }
   </style>
 </head>
 
@@ -1081,40 +1119,40 @@
       </div>
       <div class="sidebar-nav">
         <div class="nav-label">MONITORING</div>
-        <div class="nav-item" onclick="switchCategory('pid')">
+        <div class="nav-item" data-cat="pid" onclick="switchCategory('pid')">
           <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/>
           </svg>
           PID Drawing
         </div>
-        <div class="nav-item active" onclick="switchCategory('iso')">
+        <div class="nav-item active" data-cat="iso" onclick="switchCategory('iso')">
           <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
             <polyline points="14 2 14 8 20 8" />
           </svg>
           ISO Drawing
         </div>
-        <div class="nav-item" onclick="switchCategory('support')">
+        <div class="nav-item" data-cat="support" onclick="switchCategory('support')">
           <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
             <line x1="9" y1="3" x2="9" y2="21" />
           </svg>
           Support Drawing
         </div>
-        <div class="nav-item" onclick="switchCategory('valve')">
+        <div class="nav-item" data-cat="valve" onclick="switchCategory('valve')">
           <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <circle cx="12" cy="12" r="10" />
             <path d="M12 8l4 4-4 4M8 12h8" />
           </svg>
           Valve Drawing
         </div>
-        <div class="nav-item" onclick="switchCategory('speciality')">
+        <div class="nav-item" data-cat="speciality" onclick="switchCategory('speciality')">
           <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" />
           </svg>
           Speciality Drawing
         </div>
-        <div class="nav-item" onclick="switchCategory('markedpid')">
+        <div class="nav-item" data-cat="markedpid" onclick="switchCategory('markedpid')">
           <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M12 20h9" />
             <path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" />
@@ -1122,6 +1160,13 @@
           Marked PID
         </div>
 
+        <div class="nav-label">QUALITY</div>
+        <div class="nav-item" data-cat="health" onclick="switchCategory('health')">
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M22 12h-4l-3 9L9 3l-3 9H2" />
+          </svg>
+          Data Health
+        </div>
       </div>
     </aside>
 
@@ -1142,14 +1187,11 @@
             <div class="hstat-val blue" id="stat-filtered">—</div>
             <div class="hstat-label">FILTERED</div>
           </div>
-          <div class="hstat">
-            <div class="hstat-val amber" id="stat-c01">—</div>
-            <div class="hstat-label">C01</div>
+          <div class="hstat" id="hstat-pdf">
+            <div class="hstat-val green" id="stat-pdf">—</div>
+            <div class="hstat-label">PDF LINKED</div>
           </div>
-          <div class="hstat">
-            <div class="hstat-val green" id="stat-c01a">—</div>
-            <div class="hstat-label">C01A</div>
-          </div>
+          <div class="hstat-revs" id="stat-revs"></div>
           <div class="actions">
             <button class="btn-sync" onclick="runSyncLinks()" id="btn-sync">
               <i class="fas fa-sync-alt"></i> Sync Links
@@ -1159,7 +1201,7 @@
       </header>
 
   <!-- ── Toolbar ─────────────────────────────────── -->
-  <div class="toolbar">
+  <div class="toolbar" id="toolbar">
     <div class="search-wrap">
       <svg class="search-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
         stroke-width="2">
@@ -1229,11 +1271,18 @@
         </svg>
         Print
       </button>
+      <button class="btn btn-ghost" id="btn-register" onclick="openRegisterModal()">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <rect x="3" y="4" width="18" height="18" rx="2" />
+          <path d="M16 2v4M8 2v4M3 10h18" />
+        </svg>
+        Issue Register
+      </button>
     </div>
   </div>
 
   <!-- ── Results bar ──────────────────────────────── -->
-  <div class="results-bar">
+  <div class="results-bar" id="results-bar">
     <div class="results-text">
       Results: <strong id="result-count">—</strong> drawings
       <span class="results-meta">· Latest status · sorted by DWG. NO.</span>
@@ -1245,9 +1294,6 @@
   <main class="main" id="main-content">
     <!-- 테이블이 그려질 전용 영역 -->
     <div id="table-anchor"></div>
-    
-    <!-- 플레이스홀더 전용 영역 -->
-    <div id="placeholder-anchor"></div>
     
     <div class="empty-state" id="empty-state" style="display:none">
       <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
@@ -1294,7 +1340,7 @@
             <p>.xlsx files only · Max 20MB</p>
           </div>
         </div>
-        <input type="file" id="file-input" accept=".xlsx,.xls" style="display:none" onchange="handleFileSelect(this)" />
+        <input type="file" id="file-input" accept=".xlsx" style="display:none" onchange="handleFileSelect(this)" />
 
         <!-- Selected file info -->
         <div class="file-selected" id="file-selected">
@@ -1321,8 +1367,9 @@
         <div class="upload-rules">
           <h4><i class="fas fa-exclamation-triangle"></i> Upload Rules</h4>
           <ul>
-            <li>Existing drawings (same NO. & REV.) will be automatically updated.</li>
-            <li>New drawings will be automatically added to the master list.</li>
+            <li>Preview first: nothing is saved until you press Confirm Upload.</li>
+            <li>Existing drawings (same NO. & REV.) are updated — blank cells keep the current value.</li>
+            <li>New drawings are added; a blank issue date is set to today.</li>
             <li id="upload-col-hint"><strong>Excel Columns:</strong> —</li>
           </ul>
         </div>
@@ -1335,8 +1382,40 @@
             <polyline points="17 8 12 3 7 8" />
             <line x1="12" y1="3" x2="12" y2="15" />
           </svg>
-          &nbsp;Upload & Update
+          &nbsp;Preview Changes
         </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Revision History Modal ────────────────────── -->
+  <div class="modal-backdrop" id="history-modal" onclick="if (event.target === this) closeModal('history-modal')">
+    <div class="modal modal-wide">
+      <div class="modal-header">
+        <div class="modal-title" id="history-title">Revision History</div>
+        <button class="modal-close" onclick="closeModal('history-modal')">×</button>
+      </div>
+      <div class="modal-body" id="history-body"></div>
+    </div>
+  </div>
+
+  <!-- ── Issue Register Modal ──────────────────────── -->
+  <div class="modal-backdrop" id="register-modal" onclick="if (event.target === this) closeModal('register-modal')">
+    <div class="modal">
+      <div class="modal-header">
+        <div class="modal-title">Issue Register — Excel</div>
+        <button class="modal-close" onclick="closeModal('register-modal')">×</button>
+      </div>
+      <div class="modal-body">
+        <p class="modal-note">Drawings issued in the period, split into New / Revised / VOID with the previous revision.</p>
+        <div class="date-row">
+          <label>From <input type="date" id="reg-from" class="filter-select"></label>
+          <label>To <input type="date" id="reg-to" class="filter-select"></label>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn-cancel" onclick="closeModal('register-modal')">Cancel</button>
+        <button class="btn btn-primary" onclick="downloadRegister()">Download</button>
       </div>
     </div>
   </div>
@@ -1358,239 +1437,20 @@
       total: 0,
       page: 1,
       perPage: 20,
-      filters: {
-        search: '',
-        system: '',
-        status: '',
-        type: '',
-        title: '',
-        size: '',
-        remark: ''
-      },
-      globalStats: {}
+      filters: { search: '', system: '', status: '', type: '', title: '', size: '', remark: '' }
     };
 
-    /* ─── Tab Switching ─────────────────────────────── */
-    function switchCategory(cat) {
-      const anchorTable = document.getElementById('table-anchor');
-      const anchorPlace = document.getElementById('placeholder-anchor');
-
-      state.category = cat;
-      state.page = 1;
-      state.filters.search = '';
-      state.filters.system = '';
-      state.filters.status = '';
-      state.filters.type = '';
-      state.filters.title = '';
-      state.filters.size = '';
-      state.filters.remark = '';
-      document.getElementById('search').value = '';
-      document.getElementById('filter-system').value = '';
-      document.getElementById('filter-status').value = '';
-      document.getElementById('filter-type').value = '';
-      document.getElementById('filter-title').value = '';
-      document.getElementById('filter-size').value = '';
-      document.getElementById('filter-remark').value = '';
-
-      document.querySelectorAll('.nav-item').forEach(el => {
-        const itemText = el.textContent.trim().toLowerCase();
-        el.classList.toggle('active', itemText.startsWith(cat) || (cat === 'iso' && itemText.includes('iso')) || (cat === 'markedpid' && itemText.includes('marked pid')));
-      });
-
-      const titles = {
-        iso: 'ISO DRAWING MASTER LIST',
-        support: 'SUPPORT DRAWING MASTER LIST',
-        valve: 'VALVE DRAWING MASTER LIST',
-        speciality: 'SPECIALITY DRAWING MASTER LIST',
-        pid: 'P&ID DRAWING MASTER LIST',
-        markedpid: 'MARKED PID MASTER LIST'
-      };
-      document.getElementById('current-category-title').textContent = titles[cat] || titles.iso;
-
-      const statusFilter = document.getElementById('filter-status');
-      if (statusFilter) statusFilter.style.display = (cat === 'support' || cat === 'markedpid') ? 'none' : '';
-      const typeFilter = document.getElementById('filter-type');
-      if (typeFilter) typeFilter.style.display = (cat === 'support' || cat === 'valve') ? '' : 'none';
-      const titleFilter = document.getElementById('filter-title');
-      if (titleFilter) titleFilter.style.display = (cat === 'speciality') ? '' : 'none';
-      const systemFilter = document.getElementById('filter-system');
-      if (systemFilter) systemFilter.style.display = (cat === 'valve' || cat === 'speciality') ? 'none' : '';
-      const sizeFilter = document.getElementById('filter-size');
-      if (sizeFilter) sizeFilter.style.display = (cat === 'iso' || cat === 'support') ? '' : 'none';
-      const remarkFilter = document.getElementById('filter-remark');
-      if (remarkFilter) remarkFilter.style.display = (cat === 'iso' || cat === 'support') ? '' : 'none';
-
-      // C01/C01A 통계 박스: Speciality/PID/Marked PID에서는 해당 없으므로 숨김
-      const statC01Box  = document.getElementById('stat-c01')?.closest('.hstat');
-      const statC01aBox = document.getElementById('stat-c01a')?.closest('.hstat');
-      if (statC01Box)  statC01Box.style.display  = (cat === 'speciality' || cat === 'pid' || cat === 'markedpid') ? 'none' : '';
-      if (statC01aBox) statC01aBox.style.display = (cat === 'speciality' || cat === 'pid' || cat === 'markedpid') ? 'none' : '';
-
-      const syncBtn = document.getElementById('btn-sync');
-      if (syncBtn) syncBtn.style.display = '';
-
-      if (cat === 'support') {
-        document.getElementById('stat-c01').textContent = '—';
-        document.getElementById('stat-c01a').textContent = '—';
-        fetch('/api/support/stats').then(r => r.json()).then(d => {
-          document.getElementById('stat-total').textContent = (d.total || 0).toLocaleString();
-        }).catch(() => {});
-        fetch('/api/support/filters').then(r => r.json()).then(d => {
-          if (d.systems) {
-            const el = document.getElementById('filter-system');
-            el.innerHTML = '<option value="">ALL SYSTEM</option>' +
-              d.systems.map(v => `<option value="${v}">${v}</option>`).join('');
-          }
-          if (d.types) {
-            const el = document.getElementById('filter-type');
-            el.innerHTML = '<option value="">ALL TYPE</option>' +
-              d.types.map(v => `<option value="${v}">${v}</option>`).join('');
-          }
-          if (d.remarks) {
-            const el = document.getElementById('filter-remark');
-            el.innerHTML = '<option value="">ALL REMARK</option>' +
-              d.remarks.map(v => `<option value="${v}">${v}</option>`).join('');
-          }
-          if (d.sizes) {
-            const el = document.getElementById('filter-size');
-            el.innerHTML = '<option value="">ALL SIZE</option>' +
-              d.sizes.map(v => `<option value="${v}">${v}</option>`).join('');
-          }
-        }).catch(() => {});
-      } else if (cat === 'iso') {
-        loadStats();
-        fetch('/api/filters').then(r => r.json()).then(d => {
-          if (d.systems) {
-            const el = document.getElementById('filter-system');
-            el.innerHTML = '<option value="">ALL SYSTEM</option>' +
-              d.systems.map(v => `<option value="${v}">${v}</option>`).join('');
-          }
-          if (d.statuses) {
-            const el = document.getElementById('filter-status');
-            el.innerHTML = '<option value="">ALL STATUS</option>' +
-              d.statuses.map(v => `<option value="${v}">${v}</option>`).join('');
-          }
-          if (d.remarks) {
-            const el = document.getElementById('filter-remark');
-            el.innerHTML = '<option value="">ALL REMARK</option>' +
-              d.remarks.map(v => `<option value="${v}">${v}</option>`).join('');
-          }
-          if (d.sizes) {
-            const el = document.getElementById('filter-size');
-            el.innerHTML = '<option value="">ALL SIZE</option>' +
-              d.sizes.map(v => `<option value="${v}">${v}</option>`).join('');
-          }
-        }).catch(() => {});
-      } else if (cat === 'valve') {
-        document.getElementById('stat-c01').textContent = '—';
-        document.getElementById('stat-c01a').textContent = '—';
-        fetch('/api/valve/stats').then(r => r.json()).then(d => {
-          document.getElementById('stat-total').textContent = (d.total || 0).toLocaleString();
-        }).catch(() => {});
-        fetch('/api/valve/filters').then(r => r.json()).then(d => {
-          if (d.valves) {
-            const el = document.getElementById('filter-type');
-            el.innerHTML = '<option value="">ALL VALVE</option>' +
-              d.valves.map(v => `<option value="${v}">${v}</option>`).join('');
-          }
-          if (d.revisions) {
-            const el = document.getElementById('filter-status');
-            el.innerHTML = '<option value="">ALL REV.</option>' +
-              d.revisions.map(v => `<option value="${v}">${v}</option>`).join('');
-          }
-        }).catch(() => {});
-      } else if (cat === 'speciality') {
-        fetch('/api/speciality/stats').then(r => r.json()).then(d => {
-          document.getElementById('stat-total').textContent = (d.total || 0).toLocaleString();
-        }).catch(() => {});
-        fetch('/api/speciality/filters').then(r => r.json()).then(d => {
-          if (d.revisions) {
-            const el = document.getElementById('filter-status');
-            el.innerHTML = '<option value="">ALL REV.</option>' +
-              d.revisions.map(v => `<option value="${v}">${v}</option>`).join('');
-          }
-          if (d.titles) {
-            const el = document.getElementById('filter-title');
-            el.innerHTML = '<option value="">ALL TITLE</option>' +
-              d.titles.map(v => `<option value="${v}">${v}</option>`).join('');
-          }
-        }).catch(() => {});
-      } else if (cat === 'pid') {
-        fetch('/api/pid/stats').then(r => r.json()).then(d => {
-          document.getElementById('stat-total').textContent = (d.total || 0).toLocaleString();
-        }).catch(() => {});
-        fetch('/api/pid/filters').then(r => r.json()).then(d => {
-          if (d.systems) {
-            const el = document.getElementById('filter-system');
-            el.innerHTML = '<option value="">ALL SYSTEM</option>' +
-              d.systems.map(v => `<option value="${v}">${v}</option>`).join('');
-          }
-          if (d.revisions) {
-            const el = document.getElementById('filter-status');
-            el.innerHTML = '<option value="">ALL REV.</option>' +
-              d.revisions.map(v => `<option value="${v}">${v}</option>`).join('');
-          }
-        }).catch(() => {});
-      } else if (cat === 'markedpid') {
-        fetch('/api/markedpid/stats').then(r => r.json()).then(d => {
-          document.getElementById('stat-total').textContent = (d.total || 0).toLocaleString();
-        }).catch(() => {});
-        fetch('/api/markedpid/filters').then(r => r.json()).then(d => {
-          if (d.systems) {
-            const el = document.getElementById('filter-system');
-            el.innerHTML = '<option value="">ALL SYSTEM</option>' +
-              d.systems.map(v => `<option value="${v}">${v}</option>`).join('');
-          }
-        }).catch(() => {});
-      }
-
-      if (cat === 'iso') {
-        if (anchorTable) anchorTable.style.display = '';
-        if (anchorPlace) anchorPlace.style.display = 'none';
-        loadDrawings();
-      } else if (cat === 'support') {
-        if (anchorTable) anchorTable.style.display = '';
-        if (anchorPlace) anchorPlace.style.display = 'none';
-        loadSupportDrawings();
-      } else if (cat === 'valve') {
-        if (anchorTable) anchorTable.style.display = '';
-        if (anchorPlace) anchorPlace.style.display = 'none';
-        loadValveDrawings();
-      } else if (cat === 'speciality') {
-        if (anchorTable) anchorTable.style.display = '';
-        if (anchorPlace) anchorPlace.style.display = 'none';
-        loadSpecialityDrawings();
-      } else if (cat === 'pid') {
-        if (anchorTable) anchorTable.style.display = '';
-        if (anchorPlace) anchorPlace.style.display = 'none';
-        loadPidDrawings();
-      } else if (cat === 'markedpid') {
-        if (anchorTable) anchorTable.style.display = '';
-        if (anchorPlace) anchorPlace.style.display = 'none';
-        loadMarkedPidDrawings();
-      } else {
-        if (anchorTable) anchorTable.style.display = 'none';
-        if (anchorPlace) anchorPlace.style.display = 'block';
-        renderPlaceholder(cat);
-      }
-    }
-
-    function renderPlaceholder(cat) {
-      const anchorPlace = document.getElementById('placeholder-anchor');
-      anchorPlace.innerHTML = `
-        <div class="empty-state">
-          <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-            <path d="M12 8v4l3 3" />
-            <circle cx="12" cy="12" r="9" />
-          </svg>
-          <h2 style="margin-top:10px">${cat.toUpperCase()} Drawing Module</h2>
-          <p style="margin-top:5px; color:var(--text-light)">이 모듈은 데이터베이스 연동 준비 중입니다.<br>추후 별도의 테이블을 통해 현황을 관리할 수 있습니다.</p>
-        </div>
-      `;
-      document.getElementById('result-count').textContent = '0';
-      document.getElementById('page-info').textContent = '';
-      document.getElementById('pagination').innerHTML = '';
-    }
+    // 탭별 제목·보이는 필터·필터 목록 API — status 필터는 ISO에선 STATUS, 나머지에선 Revision
+    const CAT_META = {
+      iso:        { title: 'ISO DRAWING MASTER LIST',        label: 'ISO',        filters: ['system', 'size', 'status', 'remark'],        filtersUrl: '/api/filters',            register: true },
+      support:    { title: 'SUPPORT DRAWING MASTER LIST',    label: 'Support',    filters: ['system', 'size', 'status', 'type', 'remark'], filtersUrl: '/api/support/filters',    register: true },
+      valve:      { title: 'VALVE DRAWING MASTER LIST',      label: 'Valve',      filters: ['status', 'type'],                            filtersUrl: '/api/valve/filters' },
+      speciality: { title: 'SPECIALITY DRAWING MASTER LIST', label: 'Speciality', filters: ['status', 'title'],                           filtersUrl: '/api/speciality/filters' },
+      pid:        { title: 'P&ID DRAWING MASTER LIST',       label: 'P&ID',       filters: ['system', 'status'],                          filtersUrl: '/api/pid/filters' },
+      markedpid:  { title: 'MARKED PID MASTER LIST',         label: 'Marked PID', filters: ['system'],                                    filtersUrl: '/api/markedpid/filters' },
+      health:     { title: 'DATA HEALTH',                    label: 'Data Health', filters: [] }
+    };
+    const FILTER_IDS = { system: 'filter-system', size: 'filter-size', status: 'filter-status', type: 'filter-type', title: 'filter-title', remark: 'filter-remark' };
 
     /* ─── Utils ─────────────────────────────────────── */
     let _loadingCount = 0;
@@ -1617,110 +1477,184 @@
         ? `<a href="${esc(href)}" target="_blank" class="td-dwgno">${text}</a>`
         : `<span class="td-dwgno no-link">${text}</span>`;
     }
-
-    /* ─── Load Stats & Filters ────────────────────────── */
-    function applyStats(data) {
-      document.getElementById('stat-total').textContent = (data.total || 0).toLocaleString();
-      document.getElementById('stat-c01').textContent = (data.C01 || 0).toLocaleString();
-      document.getElementById('stat-c01a').textContent = (data.C01A || 0).toLocaleString();
+    function revClass(rev) {
+      const r = String(rev || '').toUpperCase();
+      return r === 'C01A' ? 'rev-green' : r === 'C01B' ? 'rev-amber' : r === 'VOID' ? 'rev-red' : 'rev-blue';
+    }
+    // Revision 배지 — ISO·Support에서는 누르면 이력 창을 연다
+    function revBadge(rev, no) {
+      if (!rev) return '—';
+      return no
+        ? `<button class="rev-badge ${revClass(rev)} rev-hist" data-no="${esc(no)}" title="Show revision history">${esc(rev)}</button>`
+        : `<span class="rev-badge ${revClass(rev)}">${esc(rev)}</span>`;
+    }
+    function closeModal(id) {
+      document.getElementById(id).classList.remove('show');
     }
 
-    async function loadStats() {
+    // 쓰기 요청 — 서버에 WRITE_PASSWORD가 설정되어 있으면 한 번 물어보고 탭을 닫을 때까지 기억한다
+    function getWritePw() { try { return sessionStorage.getItem('writePw') || ''; } catch (e) { return ''; } }
+    function setWritePw(v) { try { v ? sessionStorage.setItem('writePw', v) : sessionStorage.removeItem('writePw'); } catch (e) {} }
+    async function writeFetch(url, opts = {}) {
+      const send = () => fetch(url, { ...opts, method: 'POST', headers: { 'X-Write-Password': getWritePw() } });
+      let res = await send();
+      if (res.status === 401) {
+        const pw = prompt('Enter the write password');
+        if (!pw) throw new Error('Write password required.');
+        setWritePw(pw);
+        res = await send();
+        if (res.status === 401) { setWritePw(''); throw new Error('Wrong write password.'); }
+      }
+      return res;
+    }
+
+    // 현재 탭의 필터를 API 파라미터로 — 목록·Export·Print가 같은 조건을 쓴다
+    function filterParams(extra = {}) {
+      const f = state.filters;
+      const p = { search: f.search };
+      switch (state.category) {
+        case 'iso':        Object.assign(p, { system: f.system, status: f.status, size: f.size, remark: f.remark }); break;
+        case 'support':    Object.assign(p, { system: f.system, revision: f.status, type: f.type, size: f.size, remark: f.remark }); break;
+        case 'valve':      Object.assign(p, { valve: f.type, revision: f.status }); break;
+        case 'speciality': Object.assign(p, { revision: f.status, title: f.title }); break;
+        case 'pid':        Object.assign(p, { system: f.system, revision: f.status }); break;
+        case 'markedpid':  Object.assign(p, { system: f.system }); break;
+      }
+      return new URLSearchParams({ ...p, ...extra });
+    }
+
+    /* ─── Tab Switching ─────────────────────────────── */
+    function setTabChrome(cat) {
+      const meta = CAT_META[cat];
+      document.querySelectorAll('.nav-item').forEach(el => el.classList.toggle('active', el.dataset.cat === cat));
+      document.getElementById('current-category-title').textContent = meta.title;
+      Object.entries(FILTER_IDS).forEach(([k, id]) => {
+        document.getElementById(id).style.display = meta.filters.includes(k) ? '' : 'none';
+      });
+      const isHealth = cat === 'health';
+      ['toolbar', 'results-bar', 'pagination', 'btn-sync'].forEach(id => {
+        document.getElementById(id).style.display = isHealth ? 'none' : '';
+      });
+      document.querySelector('.header-stats').style.visibility = isHealth ? 'hidden' : '';
+      document.getElementById('btn-register').style.display = meta.register ? '' : 'none';
+    }
+
+    function switchCategory(cat) {
+      state.category = cat;
+      state.page = 1;
+      Object.keys(state.filters).forEach(k => state.filters[k] = '');
+      document.getElementById('search').value = '';
+      Object.values(FILTER_IDS).forEach(id => document.getElementById(id).value = '');
+      document.getElementById('table-anchor').innerHTML = '';
+      document.getElementById('empty-state').style.display = 'none';
+      setTabChrome(cat);
+
+      if (cat === 'health') { loadHealth(); return; }
+      document.getElementById('stat-total').textContent = '—';
+      loadStats(cat);
+      loadCatFilters(cat);
+      loadList();
+    }
+
+    /* ─── Load Stats & Filters ────────────────────────── */
+    function applyStats(d) {
+      document.getElementById('stat-total').textContent = (d.total || 0).toLocaleString();
+      const pdf = document.getElementById('stat-pdf');
+      pdf.textContent = d.pdf_target ? `${(d.linked / d.pdf_target * 100).toFixed(1)}%` : '—';
+      pdf.parentElement.title = `${(d.linked || 0).toLocaleString()} of ${(d.pdf_target || 0).toLocaleString()} drawings have a PDF (VOID excluded)`;
+      document.getElementById('stat-revs').innerHTML = (d.by_rev || []).map(([r, n]) =>
+        `<span class="rev-chip ${revClass(r)}" title="Latest revision ${esc(r)}">${esc(r)}<b>${n.toLocaleString()}</b></span>`).join('');
+    }
+
+    async function loadStats(cat = state.category) {
       try {
-        const res = await fetch('/api/stats');
-        applyStats(await res.json());
+        const res = await fetch(`/api/${cat}/stats`);
+        const d = await res.json();
+        if (d.error) throw new Error(d.error);
+        if (state.category === cat) applyStats(d);
       } catch (e) { console.error('Error loading stats:', e); }
     }
 
-    function applyFilters(data) {
-      const populate = (id, list, label) => {
-        const el = document.getElementById(id);
-        if (!el) return;
-        el.innerHTML = `<option value="">ALL ${label}</option>` +
-          list.map(v => `<option value="${v}">${v}</option>`).join('');
-      };
-      if (data.systems) populate('filter-system', data.systems, 'SYSTEM');
-      if (data.statuses) populate('filter-status', data.statuses, 'STATUS');
-      if (data.types) populate('filter-type', data.types, 'TYPE');
-      if (data.remarks) populate('filter-remark', data.remarks, 'REMARK');
-      if (data.sizes) populate('filter-size', data.sizes, 'SIZE');
+    function populate(id, list, label) {
+      if (!list) return;
+      const el = document.getElementById(id);
+      el.innerHTML = `<option value="">ALL ${label}</option>` +
+        list.map(v => `<option value="${esc(v)}">${esc(v)}</option>`).join('');
     }
 
-    async function refreshSizeOptions(system) {
-      const base = state.category === 'support' ? '/api/support/filters' : '/api/filters';
-      const qs = system ? `?system=${encodeURIComponent(system)}` : '';
+    function applyFilters(cat, d) {
+      populate('filter-system', d.systems, 'SYSTEM');
+      populate('filter-status', d.statuses || d.revisions, cat === 'iso' ? 'STATUS' : 'REV.');
+      populate('filter-type', d.types || d.valves, cat === 'valve' ? 'VALVE' : 'TYPE');
+      populate('filter-title', d.titles, 'TITLE');
+      populate('filter-remark', d.remarks, 'REMARK');
+      populate('filter-size', d.sizes, 'SIZE');
+    }
+
+    async function loadCatFilters(cat) {
       try {
-        const res = await fetch(`${base}${qs}`);
+        const res = await fetch(CAT_META[cat].filtersUrl);
         const d = await res.json();
-        const sizes = d.sizes || [];
-        const prev = state.filters.size;
-        const el = document.getElementById('filter-size');
-        el.innerHTML = '<option value="">ALL SIZE</option>' +
-          sizes.map(v => `<option value="${v}">${v}</option>`).join('');
-        el.value = sizes.includes(prev) ? prev : '';
-      } catch (e) { console.error('Error loading sizes:', e); }
-    }
-
-    async function loadFilters() {
-      try {
-        const res = await fetch('/api/filters');
-        applyFilters(await res.json());
+        if (state.category === cat) applyFilters(cat, d);
       } catch (e) { console.error('Error loading filters:', e); }
     }
 
-    /* ─── Load drawings ──────────────────────────────── */
-    async function loadDrawings() {
-      showLoading(true);
-      const params = new URLSearchParams({
-        search: state.filters.search,
-        system: state.filters.system,
-        status: state.filters.status,
-        size: state.filters.size,
-        remark: state.filters.remark || '',
-        page: state.page,
-        per_page: state.perPage
-      });
-
+    async function refreshSizeOptions(system) {
+      const qs = system ? `?system=${encodeURIComponent(system)}` : '';
       try {
-        const res = await fetch(`/api/drawings?${params}`);
+        const res = await fetch(`${CAT_META[state.category].filtersUrl}${qs}`);
+        const d = await res.json();
+        const sizes = d.sizes || [];
+        const prev = state.filters.size;
+        populate('filter-size', sizes, 'SIZE');
+        document.getElementById('filter-size').value = sizes.includes(prev) ? prev : '';
+      } catch (e) { console.error('Error loading sizes:', e); }
+    }
+
+    /* ─── Load drawings ──────────────────────────────── */
+    function showList(data) {
+      state.total = data.total || 0;
+      state.data = data.data || [];
+      document.getElementById('result-count').textContent = state.total.toLocaleString();
+      document.getElementById('stat-filtered').textContent = state.total.toLocaleString();
+      RENDERERS[state.category]();
+      renderPagination();
+      updatePageInfo();
+    }
+
+    async function loadList() {
+      const cat = state.category;
+      showLoading(true);
+      try {
+        const res = await fetch(`/api/${cat}/drawings?${filterParams({ page: state.page, per_page: state.perPage })}`);
         const data = await res.json();
-
-        // Prevent race conditions: if user switched tabs while fetching, ignore this data.
-        if (state.category !== 'iso') return;
-
-        state.total = data.total || 0;
-        state.data = data.data || [];
-
-        document.getElementById('result-count').textContent = state.total.toLocaleString();
-        document.getElementById('stat-filtered').textContent = state.total.toLocaleString();
-
-        const totalPages = Math.ceil(state.total / state.perPage);
-        document.getElementById('page-info').textContent =
-          totalPages > 1 ? `Page ${state.page} / ${totalPages}` : '';
-
-        renderTable();
-        renderPagination();
+        if (data.error) throw new Error(data.error);
+        // 조회 중에 탭을 바꿨으면 버린다
+        if (state.category !== cat) return;
+        showList(data);
       } catch (e) {
-        toast('Failed to load data');
+        console.error(`${cat} load error:`, e);
+        toast(`Failed to load ${CAT_META[cat].label} data`);
       } finally {
         showLoading(false);
       }
     }
 
-    /* ─── Render table ──────────────────────────────── */
-    function renderTable() {
-      if (state.category !== 'iso') return;
+    // 표를 그릴 영역을 준비하고, 데이터가 없으면 빈 화면을 보여준다
+    function tableAnchor() {
       const anchor = document.getElementById('table-anchor');
       const empty = document.getElementById('empty-state');
-      const offset = (state.page - 1) * state.perPage;
+      const has = state.data && state.data.length;
+      if (!has) anchor.innerHTML = '';
+      if (empty) empty.style.display = has ? 'none' : 'flex';
+      return has ? anchor : null;
+    }
 
-      if (!state.data || !state.data.length) {
-        anchor.innerHTML = '';
-        if (empty) empty.style.display = 'flex';
-        return;
-      }
-      
-      if (empty) empty.style.display = 'none';
+    /* ─── Render table ──────────────────────────────── */
+    function renderTable() {
+      const anchor = tableAnchor();
+      if (!anchor) return;
+      const offset = (state.page - 1) * state.perPage;
 
       let tableHtml = `
     <div class="table-container">
@@ -1742,24 +1676,16 @@
   `;
 
       state.data.forEach((d, idx) => {
-        let revC = 'rev-default';
-        const r = String(d.revision || '').toUpperCase();
-        if (r === 'C01A') revC = 'rev-green';
-        else if (r === 'C01B') revC = 'rev-amber';
-        else if (r === 'C01') revC = 'rev-blue';
-
-        const dwgNoHtml = makeDwgLink(d.file_link, d.drawing_no);
-
         const sizeBadge = d.size ? `<span class="size-badge">${esc(d.size)}</span>` : '—';
         tableHtml += `
       <tr>
         <td class="col-no">${offset + idx + 1}</td>
         <td class="col-sys">${esc(d.system) || '—'}</td>
         <td class="col-size">${sizeBadge}</td>
-        <td class="col-dwg">${dwgNoHtml}</td>
+        <td class="col-dwg">${makeDwgLink(d.file_link, d.drawing_no)}</td>
         <td class="col-line">${esc(d.line_no) || '—'}</td>
         <td class="col-title">${esc(d.title) || '—'}</td>
-        <td class="col-rev"><span class="rev-badge ${revC}">${esc(d.revision) || '—'}</span></td>
+        <td class="col-rev">${revBadge(d.revision, d.drawing_no)}</td>
         <td class="col-date">${esc((d.issued_date || '').substring(0, 10)) || '—'}</td>
         <td class="col-remark">${esc(d.remark) || ''}</td>
       </tr>
@@ -1770,121 +1696,10 @@
       anchor.innerHTML = tableHtml;
     }
 
-    /* ─── Pagination ─────────────────────────────────── */
-    function renderPagination() {
-      const totalPages = Math.ceil(state.total / state.perPage);
-      const pg = document.getElementById('pagination');
-      pg.innerHTML = '';
-      if (totalPages <= 1) return;
-
-      const mkBtn = (label, page, active = false, disabled = false) => {
-        const b = document.createElement('button');
-        b.className = 'page-btn' + (active ? ' active' : '');
-        b.textContent = label;
-        b.disabled = disabled;
-        if (!disabled && !active) b.onclick = () => {
-          state.page = page;
-          if (state.category === 'support') {
-            loadSupportDrawings();
-          } else if (state.category === 'valve') {
-            loadValveDrawings();
-          } else if (state.category === 'speciality') {
-            loadSpecialityDrawings();
-          } else if (state.category === 'pid') {
-            loadPidDrawings();
-          } else if (state.category === 'markedpid') {
-            loadMarkedPidDrawings();
-          } else {
-            loadDrawings();
-          }
-          window.scrollTo(0, 0);
-        };
-        pg.appendChild(b);
-      };
-
-      const mkEllipsis = () => {
-        const s = document.createElement('span');
-        s.style.padding = '0 4px';
-        s.style.color = 'var(--text-light)';
-        s.textContent = '…';
-        pg.appendChild(s);
-      };
-
-      mkBtn('‹', state.page - 1, false, state.page === 1);
-
-      const start = Math.max(1, state.page - 2);
-      const end = Math.min(totalPages, state.page + 2);
-      
-      if (start > 1) {
-        mkBtn(1, 1);
-        if (start > 2) mkEllipsis();
-      }
-      
-      for (let i = start; i <= end; i++) {
-        mkBtn(i, i, i === state.page);
-      }
-      
-      if (end < totalPages) {
-        if (end < totalPages - 1) mkEllipsis();
-        mkBtn(totalPages, totalPages);
-      }
-
-      mkBtn('›', state.page + 1, false, state.page === totalPages);
-    }
-
-    function updatePageInfo() {
-      const info = document.getElementById('page-info');
-      if (!info) return;
-      const totalPages = Math.ceil(state.total / state.perPage) || 1;
-      info.textContent = `Page ${state.page} / ${totalPages}`;
-    }
-
-    async function loadSupportDrawings() {
-      showLoading(true);
-      try {
-        const params = new URLSearchParams({
-          search: state.filters.search,
-          system: state.filters.system,
-          type: state.filters.type || '',
-          size: state.filters.size || '',
-          remark: state.filters.remark || '',
-          page: state.page,
-          per_page: state.perPage
-        });
-        const res = await fetch(`/api/support/drawings?${params}`);
-        const data = await res.json();
-
-        if (data.error) throw new Error(data.error);
-
-        // Prevent race condition
-        if (state.category !== 'support') return;
-
-        state.data = data.data || [];
-        state.total = data.total || 0;
-        document.getElementById('result-count').textContent = state.total.toLocaleString();
-        document.getElementById('stat-filtered').textContent = state.total.toLocaleString();
-        renderSupportTable();
-        renderPagination();
-        updatePageInfo();
-      } catch (e) {
-        console.error('Support Load Error:', e);
-        toast('Support 데이터를 불러오지 못했습니다.');
-      } finally {
-        showLoading(false);
-      }
-    }
-
     function renderSupportTable() {
-      const anchor = document.getElementById('table-anchor');
-      const empty = document.getElementById('empty-state');
+      const anchor = tableAnchor();
+      if (!anchor) return;
       const offset = (state.page - 1) * state.perPage;
-
-      if (!state.data || !state.data.length) {
-        anchor.innerHTML = '';
-        if (empty) empty.style.display = 'flex';
-        return;
-      }
-      if (empty) empty.style.display = 'none';
 
       let tableHtml = `
         <div class="table-container">
@@ -1914,15 +1729,13 @@
       state.data.forEach((d, idx) => {
         // TYPE 코드가 도면번호 끝에 중복 포함된 경우 제거 (예: 1"-AV-B1-34/571-GB1-G-202(GS-70) → 1"-AV-B1-34/571-GB1-G-202)
         const rawDwg = (d.support_drawing || '').replace(/\([^)]+\)\s*$/, '').trim();
-        const dwgLink = makeDwgLink(d.file_link, rawDwg);
-
         const supSizeBadge = d.size ? `<span class="size-badge">${esc(d.size)}</span>` : '—';
         tableHtml += `
           <tr>
             <td class="col-sup-no">${offset + idx + 1}</td>
             <td class="col-sup-sys">${esc(d.system) || '—'}</td>
             <td class="col-size">${supSizeBadge}</td>
-            <td class="col-sup-dwg">${dwgLink}</td>
+            <td class="col-sup-dwg">${makeDwgLink(d.file_link, rawDwg)}</td>
             <td class="col-sup-type">${esc(d.type || d.title) || '—'}</td>
             <td class="col-sup-iso">${esc(d.iso_drawing) || '—'}</td>
             <td class="col-sup-line">${esc(d.line_no) || '—'}</td>
@@ -1931,7 +1744,7 @@
             <td class="col-sup-lx">${esc(d.l2) || ''}</td>
             <td class="col-sup-lx">${esc(d.l3) || ''}</td>
             <td class="col-sup-lx">${esc(d.l4) || ''}</td>
-            <td class="col-sup-rev">${esc(d.revision) || '—'}</td>
+            <td class="col-sup-rev">${revBadge(d.revision, d.support_drawing)}</td>
             <td class="col-sup-date">${esc((d.issued_date || '').substring(0, 10)) || '—'}</td>
             <td class="col-sup-remark">${esc(d.remark) || ''}</td>
           </tr>
@@ -1942,47 +1755,10 @@
       anchor.innerHTML = tableHtml;
     }
 
-    async function loadValveDrawings() {
-      showLoading(true);
-      try {
-        const params = new URLSearchParams({
-          search: state.filters.search,
-          valve: state.filters.type || '',
-          revision: state.filters.status || '',
-          page: state.page,
-          per_page: state.perPage
-        });
-        const res = await fetch(`/api/valve/drawings?${params}`);
-        const data = await res.json();
-
-        if (state.category !== 'valve') return;
-
-        state.data = data.data || [];
-        state.total = data.total || 0;
-        document.getElementById('result-count').textContent = state.total.toLocaleString();
-        document.getElementById('stat-filtered').textContent = state.total.toLocaleString();
-        renderValveTable();
-        renderPagination();
-        updatePageInfo();
-      } catch (e) {
-        console.error('Valve Load Error:', e);
-        toast('Valve 데이터를 불러오지 못했습니다.');
-      } finally {
-        showLoading(false);
-      }
-    }
-
     function renderValveTable() {
-      const anchor = document.getElementById('table-anchor');
-      const empty = document.getElementById('empty-state');
+      const anchor = tableAnchor();
+      if (!anchor) return;
       const offset = (state.page - 1) * state.perPage;
-
-      if (!state.data || !state.data.length) {
-        anchor.innerHTML = '';
-        if (empty) empty.style.display = 'flex';
-        return;
-      }
-      if (empty) empty.style.display = 'none';
 
       let tableHtml = `
         <div class="table-container">
@@ -2001,18 +1777,13 @@
       `;
 
       state.data.forEach((d, idx) => {
-        const dwgLink = makeDwgLink(d.file_link, d.drawing_no);
-
-        const r = String(d.revision || '').toUpperCase();
-        const revC = r === 'C01A' ? 'rev-green' : r === 'C01B' ? 'rev-amber' : 'rev-blue';
-
         tableHtml += `
           <tr>
             <td class="col-pid-no">${offset + idx + 1}</td>
             <td class="col-pid-sys">${esc(d.valve) || '—'}</td>
-            <td class="col-pid-dwg">${dwgLink}</td>
+            <td class="col-pid-dwg">${makeDwgLink(d.file_link, d.drawing_no)}</td>
             <td style="text-align:center;">${esc(d.title) || '—'}</td>
-            <td class="col-pid-rev"><span class="rev-badge ${revC}">${esc(d.revision) || '—'}</span></td>
+            <td class="col-pid-rev">${revBadge(d.revision)}</td>
             <td class="col-pid-date">${esc((d.issued_date || '').substring(0, 10)) || '—'}</td>
           </tr>
         `;
@@ -2022,47 +1793,10 @@
       anchor.innerHTML = tableHtml;
     }
 
-    async function loadSpecialityDrawings() {
-      showLoading(true);
-      try {
-        const params = new URLSearchParams({
-          search: state.filters.search,
-          revision: state.filters.status || '',
-          title: state.filters.title || '',
-          page: state.page,
-          per_page: state.perPage
-        });
-        const res = await fetch(`/api/speciality/drawings?${params}`);
-        const data = await res.json();
-
-        if (state.category !== 'speciality') return;
-
-        state.data = data.data || [];
-        state.total = data.total || 0;
-        document.getElementById('result-count').textContent = state.total.toLocaleString();
-        document.getElementById('stat-filtered').textContent = state.total.toLocaleString();
-        renderSpecialityTable();
-        renderPagination();
-        updatePageInfo();
-      } catch (e) {
-        console.error('Speciality Load Error:', e);
-        toast('Speciality 데이터를 불러오지 못했습니다.');
-      } finally {
-        showLoading(false);
-      }
-    }
-
     function renderSpecialityTable() {
-      const anchor = document.getElementById('table-anchor');
-      const empty = document.getElementById('empty-state');
+      const anchor = tableAnchor();
+      if (!anchor) return;
       const offset = (state.page - 1) * state.perPage;
-
-      if (!state.data || !state.data.length) {
-        anchor.innerHTML = '';
-        if (empty) empty.style.display = 'flex';
-        return;
-      }
-      if (empty) empty.style.display = 'none';
 
       let tableHtml = `
         <div class="table-container">
@@ -2083,22 +1817,15 @@
       `;
 
       state.data.forEach((d, idx) => {
-        const dwgLink = makeDwgLink(d.file_link, d.drawing_no);
-
-        let revC = 'rev-blue';
-        const r = String(d.revision || '').toUpperCase();
-        if (r === 'C01A') revC = 'rev-green';
-        else if (r === 'C01B') revC = 'rev-amber';
-
         tableHtml += `
           <tr>
             <td class="col-spc-no">${offset + idx + 1}</td>
-            <td class="col-spc-dwg">${dwgLink}</td>
+            <td class="col-spc-dwg">${makeDwgLink(d.file_link, d.drawing_no)}</td>
             <td class="col-spc-title">${esc(d.title) || '—'}</td>
             <td class="col-spc-vendor">${esc(d.vendor) || '—'}</td>
             <td class="col-spc-class">${esc(d.class) || '—'}</td>
             <td class="col-spc-conn">${esc(d.connection) || '—'}</td>
-            <td class="col-spc-rev"><span class="rev-badge ${revC}">${esc(d.revision) || '—'}</span></td>
+            <td class="col-spc-rev">${revBadge(d.revision)}</td>
             <td class="col-spc-date">${esc((d.issued_date || '').substring(0, 10)) || '—'}</td>
           </tr>
         `;
@@ -2108,45 +1835,10 @@
       anchor.innerHTML = tableHtml;
     }
 
-    async function loadPidDrawings() {
-      showLoading(true);
-      try {
-        const params = new URLSearchParams({
-          search:   state.filters.search,
-          system:   state.filters.system || '',
-          revision: state.filters.status || '',
-          page:     state.page,
-          per_page: state.perPage
-        });
-        const res = await fetch(`/api/pid/drawings?${params}`);
-        const data = await res.json();
-        if (state.category !== 'pid') return;
-        state.data  = data.data  || [];
-        state.total = data.total || 0;
-        document.getElementById('result-count').textContent = state.total.toLocaleString();
-        document.getElementById('stat-filtered').textContent = state.total.toLocaleString();
-        renderPidTable();
-        renderPagination();
-        updatePageInfo();
-      } catch (e) {
-        console.error('PID Load Error:', e);
-        toast('PID 데이터를 불러오지 못했습니다.');
-      } finally {
-        showLoading(false);
-      }
-    }
-
     function renderPidTable() {
-      const anchor = document.getElementById('table-anchor');
-      const empty  = document.getElementById('empty-state');
+      const anchor = tableAnchor();
+      if (!anchor) return;
       const offset = (state.page - 1) * state.perPage;
-
-      if (!state.data || !state.data.length) {
-        anchor.innerHTML = '';
-        if (empty) empty.style.display = 'flex';
-        return;
-      }
-      if (empty) empty.style.display = 'none';
 
       let tableHtml = `
         <div class="table-container">
@@ -2165,18 +1857,13 @@
       `;
 
       state.data.forEach((d, idx) => {
-        const dwgLink = makeDwgLink(d.file_link, d.drawing_no);
-
-        const r = String(d.revision || '').toUpperCase();
-        const revC = r === 'C01A' ? 'rev-green' : r === 'C01B' ? 'rev-amber' : 'rev-blue';
-
         tableHtml += `
           <tr>
             <td class="col-pid-no">${offset + idx + 1}</td>
             <td class="col-pid-sys">${esc(d.system) || '—'}</td>
-            <td class="col-pid-dwg">${dwgLink}</td>
+            <td class="col-pid-dwg">${makeDwgLink(d.file_link, d.drawing_no)}</td>
             <td style="text-align:center;">${esc(d.title) || '—'}</td>
-            <td class="col-pid-rev"><span class="rev-badge ${revC}">${esc(d.revision) || '—'}</span></td>
+            <td class="col-pid-rev">${revBadge(d.revision)}</td>
             <td class="col-pid-date">${esc((d.issued_date || '').substring(0, 10)) || '—'}</td>
           </tr>
         `;
@@ -2186,44 +1873,10 @@
       anchor.innerHTML = tableHtml;
     }
 
-    async function loadMarkedPidDrawings() {
-      showLoading(true);
-      try {
-        const params = new URLSearchParams({
-          search: state.filters.search,
-          system: state.filters.system || '',
-          page:   state.page,
-          per_page: state.perPage
-        });
-        const res = await fetch(`/api/markedpid/drawings?${params}`);
-        const data = await res.json();
-        if (state.category !== 'markedpid') return;
-        state.data  = data.data  || [];
-        state.total = data.total || 0;
-        document.getElementById('result-count').textContent = state.total.toLocaleString();
-        document.getElementById('stat-filtered').textContent = state.total.toLocaleString();
-        renderMarkedPidTable();
-        renderPagination();
-        updatePageInfo();
-      } catch (e) {
-        console.error('Marked PID Load Error:', e);
-        toast('Marked PID 데이터를 불러오지 못했습니다.');
-      } finally {
-        showLoading(false);
-      }
-    }
-
     function renderMarkedPidTable() {
-      const anchor = document.getElementById('table-anchor');
-      const empty  = document.getElementById('empty-state');
+      const anchor = tableAnchor();
+      if (!anchor) return;
       const offset = (state.page - 1) * state.perPage;
-
-      if (!state.data || !state.data.length) {
-        anchor.innerHTML = '';
-        if (empty) empty.style.display = 'flex';
-        return;
-      }
-      if (empty) empty.style.display = 'none';
 
       let tableHtml = `
         <div class="table-container">
@@ -2242,14 +1895,12 @@
       `;
 
       state.data.forEach((d, idx) => {
-        const dwgLink = makeDwgLink(d.file_link, d.drawing_no);
-
         tableHtml += `
           <tr>
             <td class="col-pid-no">${offset + idx + 1}</td>
             <td class="col-mpid-sys">${esc(d.system) || '—'}</td>
             <td class="col-mpid-dwg">${esc(d.pid_drawing_no) || '—'}</td>
-            <td class="col-mpid-dwg">${dwgLink}</td>
+            <td class="col-mpid-dwg">${makeDwgLink(d.file_link, d.drawing_no)}</td>
             <td class="col-mpid-desc" style="text-align:center;">${esc(d.title) || '—'}</td>
             <td class="col-mpid-date">${esc((d.issued_date || '').substring(0, 10)) || '—'}</td>
           </tr>
@@ -2260,43 +1911,165 @@
       anchor.innerHTML = tableHtml;
     }
 
+    const RENDERERS = {
+      iso: renderTable, support: renderSupportTable, valve: renderValveTable,
+      speciality: renderSpecialityTable, pid: renderPidTable, markedpid: renderMarkedPidTable
+    };
+
+    /* ─── Pagination ─────────────────────────────────── */
+    function renderPagination() {
+      const totalPages = Math.ceil(state.total / state.perPage);
+      const pg = document.getElementById('pagination');
+      pg.innerHTML = '';
+      if (totalPages <= 1) return;
+
+      const mkBtn = (label, page, active = false, disabled = false) => {
+        const b = document.createElement('button');
+        b.className = 'page-btn' + (active ? ' active' : '');
+        b.textContent = label;
+        b.disabled = disabled;
+        if (!disabled && !active) b.onclick = () => {
+          state.page = page;
+          loadList();
+          window.scrollTo(0, 0);
+        };
+        pg.appendChild(b);
+      };
+
+      const mkEllipsis = () => {
+        const s = document.createElement('span');
+        s.style.padding = '0 4px';
+        s.style.color = 'var(--text-light)';
+        s.textContent = '…';
+        pg.appendChild(s);
+      };
+
+      mkBtn('‹', state.page - 1, false, state.page === 1);
+
+      const start = Math.max(1, state.page - 2);
+      const end = Math.min(totalPages, state.page + 2);
+
+      if (start > 1) {
+        mkBtn(1, 1);
+        if (start > 2) mkEllipsis();
+      }
+
+      for (let i = start; i <= end; i++) {
+        mkBtn(i, i, i === state.page);
+      }
+
+      if (end < totalPages) {
+        if (end < totalPages - 1) mkEllipsis();
+        mkBtn(totalPages, totalPages);
+      }
+
+      mkBtn('›', state.page + 1, false, state.page === totalPages);
+    }
+
+    function updatePageInfo() {
+      const totalPages = Math.ceil(state.total / state.perPage) || 1;
+      document.getElementById('page-info').textContent = totalPages > 1 ? `Page ${state.page} / ${totalPages}` : '';
+    }
+
+    /* ─── Revision History ─────────────────────────────── */
+    async function openHistory(no) {
+      const cat = state.category;
+      document.getElementById('history-title').textContent = `Revision History — ${no}`;
+      const body = document.getElementById('history-body');
+      body.innerHTML = '<p class="modal-note">Loading…</p>';
+      document.getElementById('history-modal').classList.add('show');
+      try {
+        const res = await fetch(`/api/${cat}/history?no=${encodeURIComponent(no)}`);
+        const d = await res.json();
+        if (d.error) throw new Error(d.error);
+        const rows = (d.data || []).map(r => `
+          <tr>
+            <td>${revBadge(r.revision)}</td>
+            <td>${esc((r.issued_date || '').substring(0, 10)) || '—'}</td>
+            <td>${makeDwgLink(r.file_link, r.file_link ? 'Open PDF' : 'No PDF')}</td>
+            <td>${esc(r.remark) || ''}</td>
+          </tr>`).join('');
+        body.innerHTML = rows
+          ? `<table class="history-table"><thead><tr><th>REV.</th><th>ISSUE DATE</th><th>PDF</th><th>REMARK</th></tr></thead><tbody>${rows}</tbody></table>`
+          : '<p class="modal-note">No revisions found.</p>';
+      } catch (e) {
+        body.innerHTML = `<p class="modal-note">Failed to load history: ${esc(e.message)}</p>`;
+      }
+    }
+
+    document.getElementById('table-anchor').addEventListener('click', e => {
+      const btn = e.target.closest('.rev-hist');
+      if (btn) openHistory(btn.dataset.no);
+    });
+
+    /* ─── Issue Register ─────────────────────────────── */
+    function openRegisterModal() {
+      const today = new Date();
+      const iso = d => new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+      const from = document.getElementById('reg-from');
+      const to = document.getElementById('reg-to');
+      if (!from.value) from.value = iso(new Date(today.getFullYear(), today.getMonth(), 1));
+      if (!to.value) to.value = iso(today);
+      document.getElementById('register-modal').classList.add('show');
+    }
+    function downloadRegister() {
+      const params = new URLSearchParams({
+        from: document.getElementById('reg-from').value,
+        to: document.getElementById('reg-to').value
+      });
+      window.location.href = `/api/${state.category}/issue-register?${params}`;
+      closeModal('register-modal');
+    }
+
+    /* ─── Data Health ─────────────────────────────────── */
+    async function loadHealth() {
+      showLoading(true);
+      try {
+        const res = await fetch('/api/health');
+        const d = await res.json();
+        if (d.error) throw new Error(d.error);
+        if (state.category !== 'health') return;
+        const cards = d.map(c => `
+          <div class="health-card ${c.count ? 'warn' : 'ok'}">
+            <div class="health-count">${c.count.toLocaleString()}</div>
+            <div class="health-title">${esc(c.title)}</div>
+            <div class="health-desc">${esc(c.desc)}</div>
+            ${c.count ? `<button class="btn btn-ghost" onclick="exportHealth('${esc(c.id)}')">Export Excel</button>` : ''}
+          </div>`).join('');
+        document.getElementById('table-anchor').innerHTML = `
+          <div class="health-head">
+            <p>Cross-checks across ISO, Support, P&amp;ID, Valve, Speciality and Marked PID (latest revisions).</p>
+            <button class="btn btn-ghost" onclick="exportHealth('all')">Export All</button>
+          </div>
+          <div class="health-grid">${cards}</div>`;
+      } catch (e) {
+        console.error('Health load error:', e);
+        toast('Failed to load Data Health');
+      } finally {
+        showLoading(false);
+      }
+    }
+    function exportHealth(id) {
+      toast('Exporting Excel...');
+      window.location.href = `/api/health/export?check=${encodeURIComponent(id)}`;
+    }
+
     /* ─── Sync Links ─────────────────────────────────── */
     async function runSyncLinks() {
+      const cat = state.category;
       const btn = document.getElementById('btn-sync');
       const originalHtml = btn.innerHTML;
-      
       try {
         btn.disabled = true;
         btn.innerHTML = `<i class="fas fa-spinner fa-spin"></i> Syncing...`;
-        
-        const endpoint = state.category === 'support'    ? '/api/support/sync-links'
-                       : state.category === 'speciality' ? '/api/speciality/sync-links'
-                       : state.category === 'pid'        ? '/api/pid/sync-links'
-                       : state.category === 'markedpid'  ? '/api/markedpid/sync-links'
-                       : state.category === 'iso'        ? '/api/drawings/sync-links'
-                       : '/api/valve/sync-links';
-        const res = await fetch(endpoint, { method: 'POST' });
+        const res = await writeFetch(`/api/${cat}/sync-links`);
         const data = await res.json();
-        
         if (data.error) throw new Error(data.error);
-
-        toast(`✅ ${data.message}`);
-        if (state.category === 'support') {
-          loadSupportDrawings();
-        } else if (state.category === 'valve') {
-          loadValveDrawings();
-        } else if (state.category === 'speciality') {
-          loadSpecialityDrawings();
-        } else if (state.category === 'pid') {
-          loadPidDrawings();
-        } else if (state.category === 'markedpid') {
-          loadMarkedPidDrawings();
-        } else if (state.category === 'iso') {
-          loadDrawings();
-        }
+        toast(`✅ ${data.message}`, 4000);
+        if (state.category === cat) { loadStats(cat); loadList(); }
       } catch (err) {
         console.error(err);
-        toast(`❌ Sync Failed: ${err.message}`);
+        toast(`❌ Sync failed: ${err.message}`, 4000);
       } finally {
         btn.disabled = false;
         btn.innerHTML = originalHtml;
@@ -2305,19 +2078,28 @@
 
     /* ─── Upload Modal ───────────────────────────────── */
     let selectedFile = null;
+    let uploadPreviewed = false;   // 미리보기를 본 뒤에만 실제로 저장한다
 
     const UPLOAD_COL_HINTS = {
       iso:        'drawing_no / line_no / system / bore / title / revision / issued_date / file_link',
       support:    'system / support drawing / type / iso drawing / line_no / clamp height / l1 / l2 / l3 / l4 / revision / issue date',
-      valve:      'No / Valve / Drawing No / Title / Rev. / Date  (2행 헤더)',
-      speciality: 'No / Drawing No / Title / Vendor / Class / Connection / Rev. / Date  (2행 헤더)',
-      pid:        'No / System / Drawing No / Title / Rev. / Date  (2행 헤더)',
+      valve:      'No / Valve / Drawing No / Title / Rev. / Date  (header on row 2)',
+      speciality: 'No / Drawing No / Title / Vendor / Class / Connection / Rev. / Date  (header on row 2)',
+      pid:        'No / System / Drawing No / Title / Rev. / Date  (header on row 2)',
       markedpid:  'NO. / SYSTEM / MARKED PID / DESCRIPTION / DATE',
     };
+    const UPLOAD_ICON = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>`;
+
+    function setUploadBtn(label, ready) {
+      const btn = document.getElementById('upload-btn');
+      btn.innerHTML = `${UPLOAD_ICON}&nbsp;${label}`;
+      btn.classList.toggle('ready', ready);
+    }
 
     function openUploadModal() {
       const hint = document.getElementById('upload-col-hint');
-      if (hint) hint.innerHTML = `<strong>Excel Columns:</strong> ${UPLOAD_COL_HINTS[state.category] || '—'}`;
+      if (hint) hint.innerHTML = `<strong>Excel Columns:</strong> ${esc(UPLOAD_COL_HINTS[state.category] || '—')}`;
       document.getElementById('upload-modal').classList.add('show');
       resetUploadModal();
     }
@@ -2329,23 +2111,24 @@
     }
     function resetUploadModal() {
       selectedFile = null;
+      uploadPreviewed = false;
       document.getElementById('file-input').value = '';
       document.getElementById('file-selected').classList.remove('show');
       document.getElementById('upload-progress').classList.remove('show');
       document.getElementById('upload-result').className = 'upload-result';
       document.getElementById('upload-result').innerHTML = '';
-      document.getElementById('upload-btn').classList.remove('ready');
       document.getElementById('progress-fill').style.width = '0%';
+      setUploadBtn('Preview Changes', false);
     }
 
     function setFileInfo(file) {
       selectedFile = file;
+      uploadPreviewed = false;
       document.getElementById('file-name').textContent = file.name;
-      document.getElementById('file-size').textContent =
-        (file.size / 1024).toFixed(0) + ' KB';
+      document.getElementById('file-size').textContent = (file.size / 1024).toFixed(0) + ' KB';
       document.getElementById('file-selected').classList.add('show');
-      document.getElementById('upload-btn').classList.add('ready');
       document.getElementById('upload-result').className = 'upload-result';
+      setUploadBtn('Preview Changes', true);
     }
 
     function handleFileSelect(input) {
@@ -2362,149 +2145,106 @@
       e.preventDefault();
       document.getElementById('drop-zone').classList.remove('dragover');
       const file = e.dataTransfer.files[0];
-      if (file && (file.name.endsWith('.xlsx') || file.name.endsWith('.xls'))) {
+      if (file && file.name.toLowerCase().endsWith('.xlsx')) {
         setFileInfo(file);
       } else {
-        toast('❌ .xlsx 파일만 업로드 가능합니다');
+        toast('❌ Only .xlsx files can be uploaded');
       }
+    }
+
+    function uploadSummary(d) {
+      const items = [['EXCEL ROWS', d.processed], ['NEW', d.new], ['REVISED', d.revised],
+                     ['CHANGED', d.changed], ['NO CHANGE', d.skipped]];
+      if (d.invalid) items.push(['NO KEY', d.invalid]);
+      const grid = items.map(([l, v]) =>
+        `<div class="result-item"><div class="result-val">${(v || 0).toLocaleString()}</div><div class="result-lbl">${l}</div></div>`).join('');
+      const samples = (d.samples || []).map(s => {
+        const diff = s.diff ? Object.entries(s.diff).map(([c, [a, b]]) =>
+          `<div class="diff">${esc(c)}: ${esc(a) || '(blank)'} → ${esc(b)}</div>`).join('') : '';
+        return `<div><span class="kind">${esc(s.kind)}</span>${esc(s.no)}</div>${diff}`;
+      }).join('');
+      return `<div class="result-grid">${grid}</div>` + (samples ? `<div class="preview-list">${samples}</div>` : '');
     }
 
     async function doUpload() {
       if (!selectedFile) return;
       const btn = document.getElementById('upload-btn');
       if (!btn.classList.contains('ready')) return;
+      const cat = state.category;
+      const dry = !uploadPreviewed;
 
-      // Progress UI
       btn.disabled = true;
-      btn.textContent = '업로드 중...';
+      btn.textContent = dry ? 'Checking...' : 'Uploading...';
       document.getElementById('upload-progress').classList.add('show');
-      document.getElementById('upload-result').className = 'upload-result';
+      const result = document.getElementById('upload-result');
+      result.className = 'upload-result';
 
-      // Animate progress bar (fake — real progress via fetch)
+      // 진행 표시(실제 진행률이 아니라 대기 중임을 보여주는 용도)
       let pct = 0;
       const fill = document.getElementById('progress-fill');
       const ptxt = document.getElementById('progress-text');
       const ticker = setInterval(() => {
         pct = Math.min(pct + 3, 85);
         fill.style.width = pct + '%';
-        ptxt.textContent = `처리 중... ${pct}%`;
+        ptxt.textContent = `Processing... ${pct}%`;
       }, 200);
 
       try {
         const formData = new FormData();
         formData.append('file', selectedFile);
-
-        const uploadUrl = state.category === 'support'    ? '/api/support/upload'
-                        : state.category === 'valve'       ? '/api/valve/upload'
-                        : state.category === 'speciality'  ? '/api/speciality/upload'
-                        : state.category === 'pid'         ? '/api/pid/upload'
-                        : state.category === 'markedpid'   ? '/api/markedpid/upload'
-                        : '/api/upload';
-        const res = await fetch(uploadUrl, { method: 'POST', body: formData });
+        const res = await writeFetch(`/api/${cat}/upload${dry ? '?dry_run=1' : ''}`, { body: formData });
         const data = await res.json();
 
         clearInterval(ticker);
         fill.style.width = '100%';
-        ptxt.textContent = '완료!';
+        ptxt.textContent = 'Done';
 
         if (data.error) {
-          document.getElementById('upload-result').className = 'upload-result error';
-          document.getElementById('upload-result').innerHTML =
-            `<strong>❌ 데이터베이스 오류</strong><br><small>${data.error}</small>`;
+          result.className = 'upload-result error';
+          result.innerHTML = `<strong>❌ Upload failed</strong><br><small>${esc(data.error)}</small>`;
+          setUploadBtn(dry ? 'Preview Changes' : 'Confirm Upload', true);
+          return;
+        }
+        result.className = 'upload-result success';
+        if (dry) {
+          const pending = data.new + data.revised + data.changed;
+          result.innerHTML = `<strong>Preview — nothing saved yet</strong>` + uploadSummary(data);
+          uploadPreviewed = pending > 0;
+          setUploadBtn(pending ? `Confirm Upload (${pending.toLocaleString()})` : 'Nothing to update', pending > 0);
         } else {
-          document.getElementById('upload-result').className = 'upload-result success';
-          document.getElementById('upload-result').innerHTML = `
-        <strong>✅ 업데이트 결과</strong>
-        <div class="result-grid">
-          <div class="result-item">
-            <div class="result-val">${data.processed.toLocaleString()}</div>
-            <div class="result-lbl">EXCEL ROWS</div>
-          </div>
-          <div class="result-item">
-            <div class="result-val" style="color:var(--accent)">${data.inserted.toLocaleString()}</div>
-            <div class="result-lbl">UPDATED</div>
-          </div>
-          <div class="result-item">
-            <div class="result-val">${(data.skipped ?? 0).toLocaleString()}</div>
-            <div class="result-lbl">NO CHANGE</div>
-          </div>
-        </div>
-        ${(data.failed ?? 0) > 0 ? `<div style="margin-top:10px; color:var(--red); font-size:11px;">⚠️ ${data.failed}건의 오류가 발생했습니다.</div>` : ''}
-      `;
-
-            const loadTask = state.category === 'support'    ? loadSupportDrawings()
-                         : state.category === 'valve'       ? loadValveDrawings()
-                         : state.category === 'speciality'  ? loadSpecialityDrawings()
-                         : state.category === 'pid'         ? loadPidDrawings()
-                         : state.category === 'markedpid'   ? loadMarkedPidDrawings()
-                         : loadDrawings();
-          await Promise.all([loadStats(), loadTask]);
-          if (data.new_total) {
-            document.getElementById('stat-total').textContent = data.new_total.toLocaleString();
-          }
+          result.innerHTML = `<strong>✅ ${data.inserted.toLocaleString()} rows saved</strong>` + uploadSummary(data);
+          selectedFile = null;
+          uploadPreviewed = false;
+          setUploadBtn('Preview Changes', false);
+          if (state.category === cat) await Promise.all([loadStats(cat), loadList(), loadCatFilters(cat)]);
         }
       } catch (e) {
         clearInterval(ticker);
-        document.getElementById('upload-result').className = 'upload-result error';
-        document.getElementById('upload-result').innerHTML =
-          `<strong>❌ 네트워크 오류</strong><br>${e.message}`;
+        result.className = 'upload-result error';
+        result.innerHTML = `<strong>❌ Upload failed</strong><br>${esc(e.message)}`;
+        setUploadBtn(dry ? 'Preview Changes' : 'Confirm Upload', true);
       } finally {
         btn.disabled = false;
-        btn.innerHTML = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-      <polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
-      &nbsp;Upload & Update`;
       }
     }
 
-    /* ─── Export placeholder ─────────────────────────── */
+    /* ─── Export / Print ─────────────────────────────── */
     function handleExportExcel() {
       toast('Exporting Excel (Filtered)...');
-      const params = new URLSearchParams({
-        search: state.filters.search || '',
-        system: state.filters.system || '',
-        status: state.filters.status || '',
-        size: state.filters.size || '',
-        remark: state.filters.remark || ''
-      });
-      window.location.href = `/api/export?${params}`;
+      window.location.href = `/api/${state.category}/export?${filterParams()}`;
     }
 
     function handlePrintReport() {
       toast('Preparing Print Report...');
-      const params = new URLSearchParams({
-        search: state.filters.search || '',
-        system: state.filters.system || '',
-        status: state.filters.status || '',
-        size: state.filters.size || '',
-        remark: state.filters.remark || ''
-      });
-      window.open(`/api/print?${params}`, '_blank');
+      window.open(`/api/${state.category}/print?${filterParams()}`, '_blank');
     }
 
     /* ─── Search Action ────────────────────────────── */
     function handleSearch() {
       state.filters.search = document.getElementById('search').value.trim();
-      state.filters.system = document.getElementById('filter-system').value;
-      state.filters.status = document.getElementById('filter-status').value;
-      state.filters.type = document.getElementById('filter-type').value;
-      state.filters.title = document.getElementById('filter-title').value;
-      state.filters.size = document.getElementById('filter-size').value;
-      state.filters.remark = document.getElementById('filter-remark').value;
+      Object.entries(FILTER_IDS).forEach(([k, id]) => state.filters[k] = document.getElementById(id).value);
       state.page = 1;
-      
-      if (state.category === 'support') {
-        loadSupportDrawings();
-      } else if (state.category === 'valve') {
-        loadValveDrawings();
-      } else if (state.category === 'speciality') {
-        loadSpecialityDrawings();
-      } else if (state.category === 'pid') {
-        loadPidDrawings();
-      } else if (state.category === 'markedpid') {
-        loadMarkedPidDrawings();
-      } else {
-        loadDrawings();
-      }
+      loadList();
     }
 
     /* ─── Event bindings ─────────────────────────────── */
@@ -2512,24 +2252,17 @@
       if (e.key === 'Enter') handleSearch();
     });
 
-    ['filter-system', 'filter-size', 'filter-status', 'filter-type', 'filter-title', 'filter-remark'].forEach(id => {
+    Object.entries(FILTER_IDS).forEach(([k, id]) => {
       document.getElementById(id).addEventListener('change', async e => {
-        if (id === 'filter-system') {
-          state.filters.system = e.target.value;
-          if (state.category === 'iso' || state.category === 'support') {
-            await refreshSizeOptions(e.target.value);
-          }
+        state.filters[k] = e.target.value;
+        if (k === 'system' && (state.category === 'iso' || state.category === 'support')) {
+          await refreshSizeOptions(e.target.value);
         }
-        if (id === 'filter-size')   state.filters.size   = e.target.value;
-        if (id === 'filter-status') state.filters.status = e.target.value;
-        if (id === 'filter-type')   state.filters.type   = e.target.value;
-        if (id === 'filter-title')  state.filters.title  = e.target.value;
-        if (id === 'filter-remark') state.filters.remark = e.target.value;
         handleSearch();
       });
     });
   </script>
- 
+
   </div><!-- end main-wrapper -->
 </div><!-- end app-container -->
 
@@ -2537,43 +2270,23 @@
     /* ─── Init ───────────────────────────────────────── */
     (async () => {
       const requestedTab = new URLSearchParams(location.search).get('tab');
-      const validTabs = ['iso', 'support', 'valve', 'speciality', 'pid', 'markedpid'];
-      if (requestedTab && validTabs.includes(requestedTab) && requestedTab !== 'iso') {
+      if (requestedTab && CAT_META[requestedTab] && requestedTab !== 'iso') {
         switchCategory(requestedTab);
         return;
       }
 
+      setTabChrome('iso');
       try {
         showLoading(true);
         const res = await fetch('/api/init');
         const init = await res.json();
-
-        if (init.filters) applyFilters(init.filters);
-        if (init.stats)   applyStats(init.stats);
-
-        if (init.drawings && state.category === 'iso') {
-          state.data  = init.drawings.data  || [];
-          state.total = init.drawings.total || 0;
-          document.getElementById('result-count').textContent = state.total.toLocaleString();
-          document.getElementById('stat-filtered').textContent = state.total.toLocaleString();
-          renderTable();
-          renderPagination();
-          updatePageInfo();
-        }
-
-        document.querySelectorAll('.nav-item').forEach(el => {
-          el.classList.toggle('active', el.textContent.trim().toLowerCase().includes('iso'));
-        });
-        document.getElementById('current-category-title').textContent = 'ISO DRAWING MASTER LIST';
-        const syncBtn = document.getElementById('btn-sync');
-        if (syncBtn) syncBtn.style.display = '';
-        const sizeFilterEl = document.getElementById('filter-size');
-        if (sizeFilterEl) sizeFilterEl.style.display = '';
-        const remarkFilterEl = document.getElementById('filter-remark');
-        if (remarkFilterEl) remarkFilterEl.style.display = '';
+        if (init.error) throw new Error(init.error);
+        if (state.category !== 'iso') return;
+        applyFilters('iso', init.filters);
+        applyStats(init.stats);
+        showList(init.drawings);
       } catch (e) {
         console.error('Init failed, falling back:', e);
-        await Promise.all([loadFilters(), loadStats()]);
         switchCategory('iso');
       } finally {
         showLoading(false);

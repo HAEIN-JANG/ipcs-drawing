@@ -1,5 +1,4 @@
 supabase
-pandas
 openpyxl
 xlsxwriter
 cloudinary

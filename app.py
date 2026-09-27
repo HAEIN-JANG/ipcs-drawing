@@ -2,12 +2,18 @@
 import os
 import re
 import io
+import hmac
+import threading
 import time as _time
-import httpx
-import pandas as pd
-from datetime import datetime
+from collections import Counter, defaultdict
 from concurrent.futures import ThreadPoolExecutor
-from flask import Flask, render_template, request, jsonify, send_file, make_response
+from datetime import datetime, date, timezone
+from functools import wraps
+
+import httpx
+import openpyxl
+import xlsxwriter
+from flask import Flask, render_template, request, jsonify, send_file, make_response, abort
 from supabase import create_client, Client, ClientOptions
 
 
@@ -30,6 +36,8 @@ _load_env()
 template_dir = os.path.abspath(os.path.dirname(__file__))
 # static_folder 를 프로젝트 루트로 두면 .env·app.py 등 모든 파일이 /<폴더명>/ 경로로 내려가므로 정적 서빙을 끈다(정적 파일은 쓰지 않음).
 app = Flask(__name__, template_folder=template_dir, static_folder=None)
+# /api/iso/... 와 예전 ISO 경로(/api/drawings 등)를 둘 다 받는다 — 기본값 경로로 리다이렉트하지 않는다.
+app.url_map.redirect_defaults = False
 
 try:
     from flask_compress import Compress
@@ -48,17 +56,201 @@ app.config["MAX_CONTENT_LENGTH"] = 20 * 1024 * 1024
 
 SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY", "")
-TABLE_ALL        = "dwg_iso"
-TABLE_LATEST     = "dwg_latest"
-TABLE_SUPPORT    = "support_master"
-TABLE_VALVE      = "valve_master"
-TABLE_SPECIALITY = "speciality_master"
-TABLE_PID        = "pid_master"
-TABLE_MARKED_PID = "marked_pid_master"
+# 설정되어 있으면 모든 쓰기(POST) 요청에 X-Write-Password 헤더가 필요하다. 비어 있으면 보호하지 않는다.
+WRITE_PASSWORD = os.environ.get("WRITE_PASSWORD", "")
 
-SYSTEMS   = ["AS", "ATM", "CCW", "CD", "DW", "FG", "FGH", "FO", "FW", "GT MISC",
-             "HP", "HW", "IA", "LO", "LP", "N2", "PW", "RW", "SA", "SS", "ST MISC", "SW", "WWT"]
+SYSTEMS = ["AS", "ATM", "CCW", "CD", "DW", "FG", "FGH", "FO", "FW", "GT MISC",
+           "HP", "HW", "IA", "LO", "LP", "N2", "PW", "RW", "SA", "SS", "ST MISC", "SW", "WWT"]
 REVISIONS = ["C01", "C01A", "C01B", "C01C", "C03", "VOID"]
+SUPPORT_TYPES = ["TYPICAL", "SPECIAL", "G", "GS", "U", "US", "W", "WS"]
+SUPPORT_TYPE_PREFIXES = ("G", "GS", "U", "US", "W", "WS")
+
+# 도면 종류별 설정 — 목록·Export·Print·통계·업로드·링크 동기화가 같은 테이블/칸/필터를 쓰도록 한곳에 모은다.
+#   table: 전체(이력 포함) 테이블, view: 최신 Revision만 보여주는 VIEW(없으면 table)
+#   key: 업로드 시 같은 도면으로 보는 칸, eq: 같은 이름의 파라미터로 일치 필터하는 칸
+#   cols: (칸, Excel 머리글) — size·pid_drawing_no는 계산 칸
+CATS = {
+    "iso": dict(
+        label="ISO Drawing", table="dwg_iso", view="dwg_latest", key=("drawing_no", "revision"),
+        search=("drawing_no", "line_no", "title", "system"), eq=("system", "remark"),
+        rev=True, size=True, order=("drawing_no",),
+        cols=(("system", "SYSTEM"), ("size", "SIZE"), ("drawing_no", "DWG. NO."), ("line_no", "LINE NO."),
+              ("bore", "BORE"), ("title", "TITLE"), ("revision", "REV."), ("issued_date", "ISSUE DATE"),
+              ("remark", "REMARK"), ("file_link", "PDF LINK")),
+        print_cols=("system", "drawing_no", "line_no", "title", "revision", "issued_date", "remark")),
+    "support": dict(
+        label="Support Drawing", table="support_master", view="support_latest", key=("support_drawing", "revision"),
+        search=("support_drawing", "line_no", "iso_drawing", "system", "type"), eq=("system", "remark"),
+        rev=True, size=True, order=("system", "support_drawing"),
+        cols=(("system", "SYSTEM"), ("size", "SIZE"), ("support_drawing", "SUPPORT DRAWING"), ("type", "TYPE"),
+              ("iso_drawing", "ISO DRAWING"), ("line_no", "LINE NO."), ("clamp_height", "CLAMP H"),
+              ("l1", "L1"), ("l2", "L2"), ("l3", "L3"), ("l4", "L4"), ("revision", "REV."),
+              ("issued_date", "ISSUE DATE"), ("remark", "REMARK"), ("file_link", "PDF LINK")),
+        print_cols=("system", "support_drawing", "type", "iso_drawing", "line_no", "revision", "issued_date")),
+    "valve": dict(
+        label="Valve Drawing", table="valve_master", view=None, key=("drawing_no",),
+        search=("drawing_no", "title", "valve"), eq=("valve",), rev=True, size=False, order=("id",),
+        cols=(("valve", "ITEM"), ("drawing_no", "DRAWING NO."), ("title", "TITLE"), ("revision", "REV."),
+              ("issued_date", "ISSUE DATE"), ("file_link", "PDF LINK")),
+        print_cols=("valve", "drawing_no", "title", "revision", "issued_date")),
+    "speciality": dict(
+        label="Speciality Drawing", table="speciality_master", view=None, key=("drawing_no",),
+        search=("drawing_no", "title", "vendor"), eq=("title",), rev=True, size=False, order=("drawing_no",),
+        cols=(("drawing_no", "DRAWING NO."), ("title", "TITLE"), ("vendor", "VENDOR"), ("class", "CLASS"),
+              ("connection", "CONNECTION"), ("revision", "REV."), ("issued_date", "ISSUE DATE"),
+              ("file_link", "PDF LINK")),
+        print_cols=("drawing_no", "title", "vendor", "class", "connection", "revision", "issued_date")),
+    "pid": dict(
+        label="P&ID Drawing", table="pid_master", view=None, key=("drawing_no",),
+        search=("drawing_no", "title", "system"), eq=("system",), rev=True, size=False, order=("system", "drawing_no"),
+        cols=(("system", "SYSTEM"), ("drawing_no", "DRAWING NO."), ("title", "TITLE"), ("revision", "REV."),
+              ("issued_date", "ISSUE DATE"), ("file_link", "PDF LINK")),
+        print_cols=("system", "drawing_no", "title", "revision", "issued_date")),
+    "markedpid": dict(
+        label="Marked PID", table="marked_pid_master", view=None, key=("drawing_no",),
+        search=("drawing_no", "title", "system"), eq=("system",), rev=False, size=False, order=("id",),
+        cols=(("system", "SYSTEM"), ("pid_drawing_no", "PID DRAWING NO."), ("drawing_no", "MARKED PID"),
+              ("title", "DESCRIPTION"), ("issued_date", "ISSUE DATE"), ("file_link", "PDF LINK")),
+        print_cols=("system", "pid_drawing_no", "drawing_no", "title", "issued_date")),
+}
+COMPUTED_COLS = {"size", "pid_drawing_no"}
+PAGE = 1000  # Drawing DB 프로젝트는 PostgREST 1회 최대 1,000행
+
+
+def _cat(cat):
+    # /api/drawings/... 는 예전 ISO 경로라 iso로 본다.
+    cat = "iso" if cat == "drawings" else cat
+    if cat not in CATS:
+        abort(404)
+    return cat
+
+
+# ── Supabase ─────────────────────────────────────────────────
+
+_supabase_client: Client = None
+
+def _use_http1(client: Client):
+    # 하나의 HTTP/2 연결을 여러 스레드가 공유하면 간헐적으로 ReadError(WinError 10035)가 나므로
+    # PostgREST 세션을 스레드마다 별도 연결을 쓰는 HTTP/1.1 세션으로 교체한다.
+    try:
+        old = client.postgrest.session
+        client.postgrest.session = httpx.Client(base_url=old.base_url, headers=old.headers, timeout=old.timeout,
+                                                follow_redirects=old.follow_redirects, http2=False)
+        old.close()
+    except AttributeError:
+        pass  # 라이브러리 내부 구조가 다르면 기본 세션 유지
+
+def get_client() -> Client:
+    global _supabase_client
+    if _supabase_client is not None:
+        return _supabase_client
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        raise ValueError("SUPABASE_URL and SUPABASE_KEY are not set.")
+    client = create_client(SUPABASE_URL, SUPABASE_KEY, options=ClientOptions(schema="drawing"))
+    _use_http1(client)
+    _supabase_client = client
+    return _supabase_client
+
+def _fetch_all_paginated(supabase, table, columns, page_size=PAGE, not_null=None, eq=None):
+    # 1회 최대 행 수 제한 때문에 나눠 읽는다. 첫 페이지에서 전체 건수를 받고 나머지는 병렬로 조회한다.
+    def page(offset, count=None):
+        q = supabase.table(table).select(columns, count=count)
+        if not_null: q = q.not_.is_(not_null, "null")
+        if eq:       q = q.eq(*eq)
+        return q.order("id").range(offset, offset + page_size - 1).execute()
+
+    first = page(0, "exact")
+    rows = list(first.data)
+    offsets = range(page_size, first.count or 0, page_size)
+    if offsets:
+        with ThreadPoolExecutor(max_workers=4) as ex:
+            for res in ex.map(page, offsets):
+                rows.extend(res.data)
+    return rows
+
+def _upsert_partial(table, rows, chunk=500):
+    # postgrest는 한 묶음의 열 목록을 키 합집합으로 보내 빠진 칸을 NULL로 덮어쓴다.
+    # 칸 구성이 같은 행끼리 묶어 보내야 엑셀에서 비어 있던 칸의 기존 값이 지켜진다.
+    groups = defaultdict(list)
+    for r in rows:
+        groups[tuple(sorted(r))].append(r)
+    sb = get_client()
+    for group in groups.values():
+        for i in range(0, len(group), chunk):
+            sb.table(table).upsert(group[i:i + chunk], on_conflict="id").execute()
+
+_audit_cols: dict = {}
+
+def _audit(table, rows, via):
+    # updated_at/updated_by 칸이 있는 테이블에만 수정 이력을 붙인다(칸 추가 SQL은 context-notes.md 참고).
+    if table not in _audit_cols:
+        try:
+            get_client().table(table).select("updated_at,updated_by").limit(1).execute()
+            _audit_cols[table] = True
+        except Exception:
+            _audit_cols[table] = False
+    if _audit_cols[table]:
+        now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        for r in rows:
+            r["updated_at"] = now
+            r["updated_by"] = via
+    return rows
+
+
+# ── 캐시 ─────────────────────────────────────────────────────
+
+# 조회 응답 캐시 — 도면 데이터는 업로드/링크 동기화 시에만 바뀌므로
+# 접속할 때마다 Supabase를 다시 조회하지 않고, 쓰기 작업 시에만 무효화한다.
+_resp_cache: dict = {}
+_resp_cache_lock = threading.Lock()
+RESP_CACHE_TTL = 1800  # 30분 — 무효화를 놓쳤을 때를 대비한 안전망
+RESP_CACHE_MAX = 500   # 검색어마다 키가 생겨 무한히 늘지 않도록 상한을 두고, 넘으면 비운다
+
+_distinct_cache: dict = {}   # (table, col, system) → (ts, values)
+_calc_cache: dict = {}       # 통계·Data Health 계산 결과 → (ts, value)
+DISTINCT_CACHE_TTL = 1800
+CALC_CACHE_TTL = 300
+
+def _invalidate_response_cache(filters=True):
+    # 링크 동기화는 필터 목록(Size/Remark/Revision)을 바꾸지 않으므로 filters=False로 부른다.
+    with _resp_cache_lock:
+        _resp_cache.clear()
+    _calc_cache.clear()
+    if filters:
+        _distinct_cache.clear()
+
+def cached_get(fn):
+    @wraps(fn)
+    def wrapper(*args, **kwargs):
+        key = request.full_path
+        now = _time.time()
+        with _resp_cache_lock:
+            cached = _resp_cache.get(key)
+            if cached and (now - cached[0]) < RESP_CACHE_TTL:
+                return jsonify(cached[1])
+        result = fn(*args, **kwargs)
+        body, status = (result[0], result[1]) if isinstance(result, tuple) else (result, 200)
+        if status == 200:
+            try:
+                with _resp_cache_lock:
+                    if len(_resp_cache) >= RESP_CACHE_MAX:
+                        _resp_cache.clear()
+                    _resp_cache[key] = (now, body.get_json())
+            except Exception:
+                pass
+        return result
+    return wrapper
+
+def _memo(key, fn, ttl=CALC_CACHE_TTL):
+    hit = _calc_cache.get(key)
+    if hit and (_time.time() - hit[0]) < ttl:
+        return hit[1]
+    value = fn()
+    _calc_cache[key] = (_time.time(), value)
+    return value
+
+
+# ── 공통 도우미 ───────────────────────────────────────────────
 
 _SIZE_RE = re.compile(r'^(\d+(?:\s+\d+/\d+)?(?:/\d+)?)\s*"')
 
@@ -84,111 +276,25 @@ def _line_size_raw(line_no):
         return None
     return m.group(1).strip() + '"'
 
-def _apply_size_filter(query, size):
-    if not size:
-        return query
-    return query.ilike("line_no", f'{size}%')
+def _get_distinct(table, col, system=None):
+    key = (table, col, system or "")
+    hit = _distinct_cache.get(key)
+    if hit and (_time.time() - hit[0]) < DISTINCT_CACHE_TTL:
+        return hit[1]
+    src = "line_no" if col == "size" else col
+    rows = _fetch_all_paginated(get_client(), table, src, not_null=src, eq=("system", system) if system else None)
+    if col == "size":
+        values = sorted({s for s in (_line_size_raw(r.get("line_no")) for r in rows) if s}, key=_size_numeric)
+    else:
+        values = sorted({str(r[src]) for r in rows if r.get(src)})
+    _distinct_cache[key] = (_time.time(), values)
+    return values
 
-def _apply_iso_filters(query, search, system, status, size, remark):
-    # ISO 목록·엑셀 내보내기·인쇄가 같은 조건으로 조회되도록 필터를 한곳에서 적용한다.
-    if search:
-        s = search.replace(',', '\\,')
-        query = query.or_(f"drawing_no.ilike.%{s}%,line_no.ilike.%{s}%,title.ilike.%{s}%,system.ilike.%{s}%")
-    if system: query = query.eq("system", system)
-    if status: query = query.eq("revision", status)
-    if size:   query = _apply_size_filter(query, size)
-    if remark: query = query.eq("remark", remark)
-    return query
-
-_sizes_cache: dict = {}
-_sizes_cache_ts: dict = {}
-SIZES_CACHE_TTL = 300  # 5분
-
-def _get_distinct_sizes(table, system=None):
-    key = (table, system or "")
-    now = _time.time()
-    if key in _sizes_cache and (now - _sizes_cache_ts.get(key, 0)) < SIZES_CACHE_TTL:
-        return _sizes_cache[key]
-
-    rows = _fetch_all_paginated(get_client(), table, "line_no", eq=("system", system) if system else None)
-    sizes = {s for s in (_line_size_raw(r.get("line_no")) for r in rows) if s}
-    result = sorted(sizes, key=_size_numeric)
-    _sizes_cache[key] = result
-    _sizes_cache_ts[key] = now
-    return result
-
-_supabase_client: Client = None
-
-def _use_http1(client: Client):
-    # 하나의 HTTP/2 연결을 여러 스레드가 공유하면 간헐적으로 ReadError(WinError 10035)가 나므로
-    # PostgREST 세션을 스레드마다 별도 연결을 쓰는 HTTP/1.1 세션으로 교체한다.
+def _safe_distinct(table, col, system=None):
     try:
-        old = client.postgrest.session
-        client.postgrest.session = httpx.Client(base_url=old.base_url, headers=old.headers, timeout=old.timeout,
-                                                follow_redirects=old.follow_redirects, http2=False)
-        old.close()
-    except AttributeError:
-        pass  # 라이브러리 내부 구조가 다르면 기본 세션 유지
-
-def get_client() -> Client:
-    global _supabase_client
-    if _supabase_client is not None:
-        return _supabase_client
-    if not SUPABASE_URL or not SUPABASE_KEY:
-        raise ValueError("SUPABASE_URL, SUPABASE_KEY를 확인하세요.")
-    client = create_client(SUPABASE_URL, SUPABASE_KEY, options=ClientOptions(schema="drawing"))
-    _use_http1(client)
-    _supabase_client = client
-    return _supabase_client
-
-_stats_cache = None
-_stats_cache_ts = 0
-STATS_CACHE_TTL = 60
-
-def _invalidate_stats_cache():
-    global _stats_cache, _stats_cache_ts
-    _stats_cache = None
-    _stats_cache_ts = 0
-
-# 조회 응답 캐시 — 도면 데이터는 업로드/링크 동기화 시에만 바뀌므로
-# 접속할 때마다 Supabase를 다시 조회하지 않고, 쓰기 작업 시에만 무효화한다.
-import threading
-from functools import wraps
-
-_resp_cache: dict = {}
-_resp_cache_lock = threading.Lock()
-RESP_CACHE_TTL = 1800  # 30분 — 무효화를 놓쳤을 때를 대비한 안전망
-RESP_CACHE_MAX = 500   # 검색어마다 키가 생겨 무한히 늘지 않도록 상한을 두고, 넘으면 비운다
-
-def _invalidate_response_cache():
-    with _resp_cache_lock:
-        _resp_cache.clear()
-    _remarks_cache.clear()
-    _remarks_cache_ts.clear()
-    _sizes_cache.clear()
-    _sizes_cache_ts.clear()
-
-def cached_get(fn):
-    @wraps(fn)
-    def wrapper(*args, **kwargs):
-        key = request.full_path
-        now = _time.time()
-        with _resp_cache_lock:
-            cached = _resp_cache.get(key)
-            if cached and (now - cached[0]) < RESP_CACHE_TTL:
-                return jsonify(cached[1])
-        result = fn(*args, **kwargs)
-        body, status = (result[0], result[1]) if isinstance(result, tuple) else (result, 200)
-        if status == 200:
-            try:
-                with _resp_cache_lock:
-                    if len(_resp_cache) >= RESP_CACHE_MAX:
-                        _resp_cache.clear()
-                    _resp_cache[key] = (now, body.get_json())
-            except Exception:
-                pass
-        return result
-    return wrapper
+        return _get_distinct(table, col, system)
+    except Exception:
+        return []
 
 def _safe_int(val, default, min_val=1):
     try:
@@ -196,16 +302,18 @@ def _safe_int(val, default, min_val=1):
     except (TypeError, ValueError):
         return default
 
+def _q(value):
+    # or_() 안의 값은 쉼표·괄호·따옴표가 구문을 깨므로 큰따옴표로 감싸고 \ 와 " 를 이스케이프한다.
+    return '"' + value.replace('\\', '\\\\').replace('"', '\\"') + '"'
+
 def get_cloudinary_url(file_key):
     if not file_key:
         return None
     file_key = str(file_key).strip()
-    if file_key.startswith("http"):
-        if "cloudinary.com" in file_key and not any(
-            file_key.lower().endswith(ext) for ext in [".pdf", ".jpg", ".jpeg", ".png"]
-        ):
-            return file_key + ".pdf"
-        return file_key
+    if file_key.startswith("http") and "cloudinary.com" in file_key and not any(
+        file_key.lower().endswith(ext) for ext in [".pdf", ".jpg", ".jpeg", ".png"]
+    ):
+        return file_key + ".pdf"
     return file_key
 
 def _sanitize_link(d: dict, key: str = "file_link"):
@@ -213,18 +321,638 @@ def _sanitize_link(d: dict, key: str = "file_link"):
     if fk and "res.cloudinary.com" not in fk:
         d[key] = None
 
+def _rev_arg(args):
+    # ISO 화면은 예전부터 revision을 status 파라미터로 보낸다.
+    return (args.get("revision") or args.get("status") or "").strip()
+
+def _target(cat, args):
+    # 최신 VIEW가 있는 종류는 Revision을 고르면 이력 전체에서 찾는다(구 Revision 조회).
+    cfg = CATS[cat]
+    if cfg["view"] and not _rev_arg(args):
+        return cfg["view"]
+    return cfg["table"]
+
+def _apply_filters(cat, q, args):
+    # 목록·Export·Print가 같은 조건으로 조회되도록 필터를 한곳에서 적용한다.
+    cfg = CATS[cat]
+    search = (args.get("search") or "").strip()
+    if search:
+        pat = _q(f"%{search}%")
+        q = q.or_(",".join(f"{c}.ilike.{pat}" for c in cfg["search"]))
+    for col in cfg["eq"]:
+        v = (args.get(col) or "").strip()
+        if v:
+            q = q.eq(col, v)
+    rev = _rev_arg(args)
+    if rev and cfg["rev"]:
+        q = q.eq("revision", rev)
+    size = (args.get("size") or "").strip()
+    if size and cfg["size"]:
+        q = q.ilike("line_no", f"{size}%")
+    t = (args.get("type") or "").strip()
+    if t and cat == "support":
+        if t in SUPPORT_TYPE_PREFIXES:
+            # 대부분 "(GS-12)" 형식이지만 여는 괄호가 빠진 "GS-12)"도 있어 둘 다 찾는다.
+            q = q.or_(f"type.ilike.{_q('(' + t + '-%')},type.ilike.{_q(t + '-%')}")
+        else:
+            q = q.eq("type", t)
+    return q
+
+def _pid_by_system():
+    rows = get_client().table("pid_master").select("system,drawing_no").execute().data
+    return {p["system"]: p["drawing_no"] for p in rows if p.get("system")}
+
+def _decorate(cat, rows):
+    if cat in ("iso", "support"):
+        for r in rows:
+            r["size"] = _line_size_raw(r.get("line_no")) or ''
+    if cat == "iso":
+        for r in rows:
+            if r.get("file_link"):
+                r["file_link"] = get_cloudinary_url(r["file_link"])
+    else:
+        for r in rows:
+            _sanitize_link(r)
+    if cat == "markedpid":
+        pids = _pid_by_system()
+        for r in rows:
+            r["pid_drawing_no"] = pids.get(r.get("system"))
+    return rows
+
+def _select_cols(cat):
+    cols = [c for c, _ in CATS[cat]["cols"] if c not in COMPUTED_COLS]
+    for extra in ("id", "line_no" if CATS[cat]["size"] else None, "system" if cat == "markedpid" else None):
+        if extra and extra not in cols:
+            cols.append(extra)
+    return ",".join(cols)
+
+def _fetch_filtered(cat, args):
+    # 필터 결과 전체를 페이지로 나눠 읽는다(Export/Print용). id를 마지막 정렬 기준으로 넣어 페이지 경계 중복·누락을 막는다.
+    sb = get_client()
+    table = _target(cat, args)
+    total = _apply_filters(cat, sb.table(table).select("id", count="exact"), args).limit(1).execute().count or 0
+    cols = _select_cols(cat)
+
+    def batch(offset):
+        q = _apply_filters(cat, sb.table(table).select(cols), args)
+        for o in CATS[cat]["order"] + ("id",):
+            q = q.order(o)
+        return q.range(offset, offset + PAGE - 1).execute().data
+
+    with ThreadPoolExecutor(max_workers=4) as ex:
+        rows = [r for part in ex.map(batch, range(0, total, PAGE)) for r in part]
+    return _decorate(cat, rows)
+
+def _xlsx(sheets, filename):
+    # sheets: [(시트명, 머리글 목록, 행 목록)] → 다운로드 응답
+    output = io.BytesIO()
+    wb = xlsxwriter.Workbook(output, {"in_memory": True, "strings_to_formulas": False})
+    head = wb.add_format({"bold": True, "bg_color": "#F1F5F9", "border": 1})
+    for name, headers, rows in sheets:
+        ws = wb.add_worksheet(name[:31])
+        ws.write_row(0, 0, headers, head)
+        widths = [len(h) + 2 for h in headers]
+        for i, row in enumerate(rows, 1):
+            vals = ["" if v is None else v for v in row]
+            ws.write_row(i, 0, vals)
+            for j, v in enumerate(vals):
+                widths[j] = min(60, max(widths[j], len(str(v)) + 2))
+        for j, w in enumerate(widths):
+            ws.set_column(j, j, w)
+        ws.freeze_panes(1, 0)
+        if rows:
+            ws.autofilter(0, 0, len(rows), len(headers) - 1)
+    wb.close()
+    output.seek(0)
+    return send_file(output, as_attachment=True, download_name=filename,
+                     mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
+def _stamp():
+    return datetime.now().strftime('%Y%m%d_%H%M')
+
+def _esc(v):
+    return str(v or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+# ── 쓰기 보호 ────────────────────────────────────────────────
+
+@app.before_request
+def _guard_writes():
+    if request.method == "POST" and WRITE_PASSWORD:
+        given = request.headers.get("X-Write-Password", "")
+        if not hmac.compare_digest(given.encode(), WRITE_PASSWORD.encode()):
+            return jsonify({"error": "Write password required.", "auth": True}), 401
+
+
+@app.route("/api/cache/clear", methods=["POST"])
+def api_cache_clear():
+    # 보조 스크립트로 DB를 직접 바꾼 뒤 호출하면 30분 캐시를 기다리지 않고 바로 반영된다.
+    _invalidate_response_cache()
+    return jsonify({"success": True})
+
+
+# ── 화면·조회 ─────────────────────────────────────────────────
+
+@app.route("/")
+def index():
+    resp = make_response(render_template("index.html"))
+    resp.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+    resp.headers['Pragma'] = 'no-cache'
+    resp.headers['Expires'] = '0'
+    return resp
+
+
+def _list(cat, args):
+    page     = _safe_int(args.get("page", 1), 1)
+    per_page = _safe_int(args.get("per_page", 20), 20)
+    offset   = (page - 1) * per_page
+    q = _apply_filters(cat, get_client().table(_target(cat, args)).select("*", count="exact"), args)
+    for o in CATS[cat]["order"] + ("id",):
+        q = q.order(o)
+    res = q.range(offset, offset + per_page - 1).execute()
+    return {"data": _decorate(cat, res.data), "total": res.count, "page": page}
+
+
+@app.route("/api/drawings", defaults={"cat": "iso"})
+@app.route("/api/<cat>/drawings")
+@cached_get
+def api_drawings(cat):
+    cat = _cat(cat)
+    try:
+        return jsonify(_list(cat, request.args))
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+def _cat_stats(cat):
+    # 헤더 통계 — 목록과 같은 기준(최신 Revision)으로 Revision 분포와 PDF 연결 수를 센다. VOID는 PDF 대상에서 뺀다.
+    def calc():
+        cfg = CATS[cat]
+        cols = "id,file_link" + (",revision" if cfg["rev"] else "")
+        rows = _fetch_all_paginated(get_client(), cfg["view"] or cfg["table"], cols)
+        by_rev = Counter(r.get("revision") or "—" for r in rows) if cfg["rev"] else Counter()
+        targets = [r for r in rows if r.get("revision") != "VOID"]
+        return {"total": len(rows),
+                "by_rev": sorted(by_rev.items()),
+                "pdf_target": len(targets),
+                "linked": sum(1 for r in targets if r.get("file_link"))}
+    return _memo(("stats", cat), calc)
+
+
+@app.route("/api/stats", defaults={"cat": "iso"})
+@app.route("/api/<cat>/stats")
+def api_stats(cat):
+    cat = _cat(cat)
+    try:
+        return jsonify(_cat_stats(cat))
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+def _iso_filters(system=""):
+    return {"systems": SYSTEMS, "statuses": REVISIONS,
+            "remarks": _safe_distinct("dwg_iso", "remark"),
+            "sizes": _safe_distinct("dwg_iso", "size", system or None)}
+
+
+@app.route("/api/filters")
+@cached_get
+def api_filters():
+    return jsonify(_iso_filters(request.args.get("system", "")))
+
+
+@app.route("/api/init")
+@cached_get
+def api_init():
+    try:
+        with ThreadPoolExecutor(max_workers=3) as ex:
+            f_list  = ex.submit(_list, "iso", {})
+            f_stats = ex.submit(_cat_stats, "iso")
+            f_filt  = ex.submit(_iso_filters)
+            return jsonify({"filters": f_filt.result(), "stats": f_stats.result(), "drawings": f_list.result()})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/support/filters")
+@cached_get
+def api_support_filters():
+    system = request.args.get("system", "")
+    return jsonify({
+        "systems":   SYSTEMS,
+        "types":     SUPPORT_TYPES,
+        "revisions": _safe_distinct("support_master", "revision"),
+        "remarks":   _safe_distinct("support_master", "remark"),
+        "sizes":     _safe_distinct("support_master", "size", system or None),
+    })
+
+
+@app.route("/api/pid/filters")
+@cached_get
+def api_pid_filters():
+    return jsonify({"systems": _safe_distinct("pid_master", "system"),
+                    "revisions": _safe_distinct("pid_master", "revision")})
+
+
+@app.route("/api/valve/filters")
+@cached_get
+def api_valve_filters():
+    return jsonify({"valves": _safe_distinct("valve_master", "valve"),
+                    "revisions": _safe_distinct("valve_master", "revision")})
+
+
+@app.route("/api/speciality/filters")
+@cached_get
+def api_speciality_filters():
+    return jsonify({"revisions": _safe_distinct("speciality_master", "revision"),
+                    "titles": _safe_distinct("speciality_master", "title")})
+
+
+@app.route("/api/markedpid/filters")
+@cached_get
+def api_markedpid_filters():
+    return jsonify({"systems": _safe_distinct("marked_pid_master", "system")})
+
+
+@app.route("/api/<cat>/history")
+def api_history(cat):
+    # 같은 도면의 모든 Revision(구 Revision 포함)과 각 PDF
+    cat = _cat(cat)
+    cfg = CATS[cat]
+    no = request.args.get("no", "").strip()
+    if not cfg["view"] or not no:
+        return jsonify({"data": []})
+    try:
+        rows = get_client().table(cfg["table"]).select("*").eq(cfg["key"][0], no).order("revision").execute().data
+        return jsonify({"data": _decorate(cat, rows)})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+# ── Export / Print ────────────────────────────────────────────
+
+@app.route("/api/export", defaults={"cat": "iso"})
+@app.route("/api/<cat>/export")
+def api_export(cat):
+    cat = _cat(cat)
+    try:
+        rows = _fetch_filtered(cat, request.args)
+        if not rows:
+            return jsonify({"error": "No data to export"}), 404
+        cols = CATS[cat]["cols"]
+        name = CATS[cat]["label"].replace("&", "").replace(" ", "_")
+        return _xlsx([(CATS[cat]["label"], [h for _, h in cols], [[r.get(c) for c, _ in cols] for r in rows])],
+                     f"{name}_Master_{_stamp()}.xlsx")
+    except Exception as e:
+        return jsonify({"error": f"Export failed: {e}"}), 500
+
+
+@app.route("/api/print", defaults={"cat": "iso"})
+@app.route("/api/<cat>/print")
+def api_print(cat):
+    cat = _cat(cat)
+    try:
+        rows = _fetch_filtered(cat, request.args)
+        heads = dict(CATS[cat]["cols"])
+        pcols = CATS[cat]["print_cols"]
+        key_col = CATS[cat]["key"][0]
+        thead = "".join(f"<th>{_esc(heads[c])}</th>" for c in pcols)
+        body = []
+        for i, d in enumerate(rows, 1):
+            cells = "".join(
+                f"<td class='{'col-dwg' if c == key_col else ''}'>{_esc(d.get(c))}</td>" for c in pcols)
+            body.append(f"<tr><td>{i}</td>{cells}</tr>")
+        title = f"IPCS {CATS[cat]['label']} Master List"
+        return f"""<!DOCTYPE html>
+<html><head>
+<meta charset="utf-8">
+<title>{_esc(title)}</title>
+<style>
+@page {{ size: landscape; margin: 8mm; }}
+* {{ -webkit-print-color-adjust: exact; }}
+body {{ font-family: 'Inter', sans-serif; margin: 15px 0; background: #f8fafc; font-size: 8px; }}
+#print-main {{ background: #fff; padding: 20px; width: 96%; margin: 0 auto; }}
+h2 {{ text-align: center; margin-bottom: 10px; font-size: 15px; font-weight: 600; color: #1e293b; }}
+.meta {{ text-align: right; margin-bottom: 5px; font-size: 7px; color: #64748b; }}
+table {{ width: 100%; border-collapse: collapse; border: 0.5px solid #94a3b8; }}
+th, td {{ border: 0.4px solid #cbd5e1; padding: 4px 6px; text-align: center; }}
+th {{ background-color: #f1f5f9; font-weight: 600; text-transform: uppercase; }}
+.col-dwg {{ color: #2563eb; font-weight: 500; white-space: nowrap; }}
+#top-ctrl {{ width: 96%; margin: 10px auto; display: flex; justify-content: flex-end;
+             align-items: center; gap: 15px; }}
+#print-btn {{ background: #2563eb; color: #fff; border: none; padding: 6px 15px;
+              border-radius: 4px; font-size: 11px; cursor: pointer; }}
+@media print {{ body {{ background: #fff; margin: 0; }}
+                #print-main {{ width: 100%; padding: 0; }}
+                #top-ctrl {{ display: none; }} }}
+</style></head>
+<body>
+<div id="top-ctrl">
+  <div style="font-size:9px;color:#dc2626;font-weight:500;">
+    Preparing {len(rows)} filtered records — the print dialog opens automatically.
+  </div>
+  <button id="print-btn" onclick="window.print()">Print Now</button>
+</div>
+<div id="print-main">
+  <h2>{_esc(title)} ({len(rows)} Records)</h2>
+  <div class="meta">Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</div>
+  <table>
+    <thead><tr><th style="width:35px">NO.</th>{thead}</tr></thead>
+    <tbody>{''.join(body)}</tbody>
+  </table>
+</div>
+<script>
+  window.onload = function() {{
+    const wait = Math.max(3500, Math.min(6000, {len(rows)} * 1.5));
+    setTimeout(function() {{
+      window.print();
+      window.onafterprint = function() {{ window.close(); }};
+    }}, wait);
+  }};
+</script>
+</body></html>"""
+    except Exception as e:
+        return f"Print failed: {_esc(e)}", 500
+
+
+# ── 발행 대장 ─────────────────────────────────────────────────
+
+@app.route("/api/<cat>/issue-register")
+def api_issue_register(cat):
+    # 기간 안에 발행된 도면을 신규(첫 Revision) / 개정(이전 Revision 있음) / VOID로 나눠 Excel로 내보낸다.
+    cat = _cat(cat)
+    cfg = CATS[cat]
+    if not cfg["view"]:
+        abort(404)
+    d_from = request.args.get("from", "").strip() or "0000-01-01"
+    d_to   = request.args.get("to", "").strip() or "9999-12-31"
+    try:
+        no_col = cfg["key"][0]
+        extra = "line_no,title,file_link" if cat == "iso" else "type,iso_drawing,line_no,file_link"
+        rows = _fetch_all_paginated(get_client(), cfg["table"], f"id,system,{no_col},revision,issued_date,{extra}")
+        revs = defaultdict(list)
+        for r in rows:
+            revs[r[no_col]].append(r["revision"] or "")
+        out = []
+        for r in rows:
+            issued = (r.get("issued_date") or "")[:10]
+            if not (d_from <= issued <= d_to):
+                continue
+            prev = [v for v in sorted(revs[r[no_col]]) if v < (r["revision"] or "")]
+            kind = "VOID" if r["revision"] == "VOID" else ("Revised" if prev else "New")
+            out.append((issued, r.get("system"), r[no_col], r["revision"], prev[-1] if prev else "", kind, r))
+        out.sort(key=lambda x: (x[0], x[1] or "", x[2]))
+        if cat == "iso":
+            headers = ["ISSUE DATE", "SYSTEM", "DWG. NO.", "REV.", "PREV. REV.", "KIND", "LINE NO.", "TITLE", "PDF LINK"]
+            data = [list(o[:6]) + [o[6].get("line_no"), o[6].get("title"), get_cloudinary_url(o[6].get("file_link"))] for o in out]
+        else:
+            headers = ["ISSUE DATE", "SYSTEM", "SUPPORT DRAWING", "REV.", "PREV. REV.", "KIND", "TYPE", "ISO DRAWING", "LINE NO.", "PDF LINK"]
+            data = [list(o[:6]) + [o[6].get("type"), o[6].get("iso_drawing"), o[6].get("line_no"), o[6].get("file_link")] for o in out]
+        summary = Counter((o[1] or "—", o[5]) for o in out)
+        systems = sorted({s for s, _ in summary})
+        kinds = ["New", "Revised", "VOID"]
+        sum_rows = [[s] + [summary.get((s, k), 0) for k in kinds] + [sum(summary.get((s, k), 0) for k in kinds)] for s in systems]
+        sum_rows.append(["TOTAL"] + [sum(r[i] for r in sum_rows) for i in range(1, 5)])
+        return _xlsx([("Issue Register", headers, data),
+                      ("Summary", ["SYSTEM"] + kinds + ["TOTAL"], sum_rows)],
+                     f"{cfg['label'].replace(' ', '_')}_Issue_Register_{d_from}_{d_to}.xlsx".replace("0000-01-01", "start").replace("9999-12-31", "end"))
+    except Exception as e:
+        return jsonify({"error": f"Export failed: {e}"}), 500
+
+
+# ── Data Health ───────────────────────────────────────────────
+
+SUPPORT_TYPE_RE = re.compile(r"\((G|GS|U|US|W|WS)-\d+[A-Z]?\)")
+
+def _health():
+    def calc():
+        sb = get_client()
+        with ThreadPoolExecutor(max_workers=4) as ex:
+            f_lat = ex.submit(_fetch_all_paginated, sb, "dwg_latest", "id,system,drawing_no,line_no,revision,issued_date,file_link,remark")
+            f_all = ex.submit(_fetch_all_paginated, sb, "dwg_iso", "id,drawing_no,revision,issued_date")
+            f_sup = ex.submit(_fetch_all_paginated, sb, "support_latest", "id,system,support_drawing,type,iso_drawing,line_no,revision,file_link")
+            f_oth = {c: ex.submit(_fetch_all_paginated, sb, CATS[c]["table"], "id,drawing_no,file_link")
+                     for c in ("pid", "valve", "speciality", "markedpid")}
+            latest, all_iso, sup = f_lat.result(), f_all.result(), f_sup.result()
+            others = {c: f.result() for c, f in f_oth.items()}
+
+        iso_by_no = {r["drawing_no"]: r for r in latest}
+        iso_cols = ["SYSTEM", "DWG. NO.", "LINE NO.", "REV.", "ISSUE DATE", "REMARK"]
+        iso_row = lambda r: [r.get("system"), r.get("drawing_no"), r.get("line_no"), r.get("revision"), r.get("issued_date"), r.get("remark")]
+        sup_cols = ["SYSTEM", "SUPPORT DRAWING", "TYPE", "ISO DRAWING", "LINE NO.", "REV."]
+        sup_row = lambda r: [r.get("system"), r.get("support_drawing"), r.get("type"), r.get("iso_drawing"), r.get("line_no"), r.get("revision")]
+
+        # 같은 도면에서 뒤 Revision의 발행일이 앞 Revision보다 빠른 경우
+        by_no = defaultdict(list)
+        for r in all_iso:
+            by_no[r["drawing_no"]].append(r)
+        date_order = []
+        for no, rs in by_no.items():
+            rs = sorted((r for r in rs if r["revision"] != "VOID"), key=lambda r: r["revision"] or "")
+            for a, b in zip(rs, rs[1:]):
+                if a.get("issued_date") and b.get("issued_date") and b["issued_date"] < a["issued_date"]:
+                    date_order.append([no, a["revision"], a["issued_date"], b["revision"], b["issued_date"]])
+
+        checks = [
+            ("iso_no_pdf", "ISO without PDF", "Latest ISO revision (not VOID) has no PDF link.",
+             iso_cols, [iso_row(r) for r in latest if r["revision"] != "VOID" and not r.get("file_link")]),
+            ("iso_void_pdf", "VOID ISO with PDF", "Latest revision is VOID but a PDF link is still set.",
+             iso_cols, [iso_row(r) for r in latest if r["revision"] == "VOID" and r.get("file_link")]),
+            ("iso_rev_date", "Revision date order", "A later revision was issued before the previous revision.",
+             ["DWG. NO.", "REV.", "ISSUE DATE", "NEXT REV.", "NEXT ISSUE DATE"], date_order),
+            ("sup_iso_missing", "Support → unknown ISO", "Support refers to an ISO drawing that is not in the ISO list.",
+             sup_cols, [sup_row(r) for r in sup if r.get("iso_drawing") and r["iso_drawing"] not in iso_by_no]),
+            ("sup_iso_void", "Support on VOID ISO", "Support refers to an ISO drawing whose latest revision is VOID.",
+             sup_cols, [sup_row(r) for r in sup if iso_by_no.get(r.get("iso_drawing"), {}).get("revision") == "VOID"]),
+            ("sup_type", "Support type format", "Support type is not (G|GS|U|US|W|WS-n), SPECIAL or TYPICAL.",
+             sup_cols, [sup_row(r) for r in sup if not (SUPPORT_TYPE_RE.fullmatch(r.get("type") or "") or r.get("type") in ("SPECIAL", "TYPICAL"))]),
+            ("unknown_system", "Unknown system", "System code is not in the project system list.",
+             ["CATEGORY", "DRAWING NO.", "SYSTEM"],
+             [["ISO", r["drawing_no"], r.get("system")] for r in latest if r.get("system") not in SYSTEMS] +
+             [["Support", r["support_drawing"], r.get("system")] for r in sup
+              if r.get("system") not in SYSTEMS and r.get("system") != "ALL"]),   # ALL = 공통 Support 도면(P02)
+            ("other_no_pdf", "P&ID / Valve / Speciality / Marked PID without PDF", "Drawing has no PDF link.",
+             ["CATEGORY", "DRAWING NO."],
+             [[CATS[c]["label"], r["drawing_no"]] for c, rs in others.items() for r in rs if not r.get("file_link")]),
+            ("sup_no_pdf", "Support without PDF", "Latest support revision has no PDF link.",
+             sup_cols, [sup_row(r) for r in sup if r["revision"] != "VOID" and not r.get("file_link")]),
+        ]
+        return [dict(id=i, title=t, desc=d, headers=h, rows=rows) for i, t, d, h, rows in checks]
+    return _memo(("health",), calc)
+
+
+@app.route("/api/health")
+def api_health():
+    try:
+        return jsonify([{k: c[k] for k in ("id", "title", "desc")} | {"count": len(c["rows"])} for c in _health()])
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/health/export")
+def api_health_export():
+    check = request.args.get("check", "")
+    try:
+        checks = [c for c in _health() if check in ("all", c["id"])]
+        if not checks:
+            return jsonify({"error": "Unknown check"}), 404
+        return _xlsx([(c["title"].replace("/", "-").replace("→", "to"), c["headers"], c["rows"]) for c in checks],
+                     f"Drawing_Data_Health_{check}_{_stamp()}.xlsx")
+    except Exception as e:
+        return jsonify({"error": f"Export failed: {e}"}), 500
+
+
+# ── Excel 업로드 ──────────────────────────────────────────────
+
+def _read_excel(file, header_row=0, lower=False):
+    # 첫 시트를 {머리글: 값} 목록으로 읽는다. header_row는 머리글이 있는 행 번호(0부터).
+    wb = openpyxl.load_workbook(io.BytesIO(file.read()), read_only=True, data_only=True)
+    try:
+        it = wb.worksheets[0].iter_rows(values_only=True)
+        for _ in range(header_row):
+            next(it, None)
+        headers = [str(h).strip() if h is not None else "" for h in next(it, ())]
+        if lower:
+            headers = [h.lower().replace("\n", " ") for h in headers]
+        return [{h: v for h, v in zip(headers, vals) if h}
+                for vals in it if any(v not in (None, "") for v in vals)]
+    finally:
+        wb.close()
+
+def _cell(v):
+    if v is None:
+        return ""
+    if hasattr(v, "strftime"):
+        return v.strftime("%Y-%m-%d")
+    if isinstance(v, float) and v.is_integer():
+        return str(int(v))
+    return str(v).strip()
+
+def _pick(r, *names):
+    for n in names:
+        v = _cell(r.get(n))
+        if v:
+            return v
+    return ""
+
+def _date(v):
+    s = _cell(v)
+    return s.split(" ")[0][:10] if s else ""
+
+def _row(**fields):
+    # 값이 있는 칸만 남긴다 — 빈 칸은 보내지 않아 기존 값을 지킨다.
+    return {k: v for k, v in fields.items() if v}
+
+def _parse_upload(cat, file):
+    if cat == "iso":
+        return [_row(drawing_no=_pick(r, "drawing_no", "drawing_n"), line_no=_pick(r, "line_no"),
+                     system=_pick(r, "system"), bore=_pick(r, "bore"), title=_pick(r, "title"),
+                     revision=_pick(r, "revision"), issued_date=_date(r.get("issued_date")),
+                     file_link=get_cloudinary_url(_pick(r, "file_link")))
+                for r in _read_excel(file, 0, lower=True)]
+    if cat == "support":
+        # 신 포맷(support tag no.)과 구 포맷(support drawing) 모두 지원
+        return [_row(system=_pick(r, "system"), support_drawing=_pick(r, "support tag no.", "support drawing"),
+                     type=_pick(r, "type"), iso_drawing=_pick(r, "iso drawing no.", "iso drawing"),
+                     line_no=_pick(r, "line no.", "line no"),
+                     clamp_height=_pick(r, "shoe  height", "clamp height", "clamp h"),
+                     l1=_pick(r, "l1"), l2=_pick(r, "l2"), l3=_pick(r, "l3"), l4=_pick(r, "l4"),
+                     revision=_pick(r, "latest", "revision", "rev"), issued_date=_date(r.get("issue date")))
+                for r in _read_excel(file, 0, lower=True)]
+    if cat == "valve":
+        return [_row(drawing_no=_pick(r, "Drawing No", "Drawing No."), valve=_pick(r, "Valve", "Item"),
+                     title=_pick(r, "Title"), revision=_pick(r, "Rev.", "Revision"), issued_date=_date(r.get("Date")))
+                for r in _read_excel(file, 1)]
+    if cat == "speciality":
+        return [_row(drawing_no=_pick(r, "Drawing No", "Drawing No."), title=_pick(r, "Title"),
+                     vendor=_pick(r, "Vendor"), **{"class": _pick(r, "Class")}, connection=_pick(r, "Connection"),
+                     revision=_pick(r, "Rev.", "Revision"), issued_date=_date(r.get("Date")))
+                for r in _read_excel(file, 1)]
+    if cat == "pid":
+        return [_row(drawing_no=_pick(r, "Drawing No"), system=_pick(r, "System"), title=_pick(r, "Title"),
+                     revision=_pick(r, "Rev."), issued_date=_date(r.get("Date")))
+                for r in _read_excel(file, 1)]
+    return [_row(drawing_no=_pick(r, "MARKED PID"), system=_pick(r, "SYSTEM"), title=_pick(r, "DESCRIPTION"),
+                 issued_date=_date(r.get("DATE")))
+            for r in _read_excel(file, 0)]
+
+
+def _apply_upload(cat, rows, dry_run):
+    # 기존 행과 비교해 신규 / 개정(같은 도면의 새 Revision) / 변경 / 변경없음으로 나누고,
+    # 신규·변경 행만 upsert한다. dry_run이면 분류만 돌려준다(업로드 미리보기).
+    cfg = CATS[cat]
+    key = cfg["key"]
+    valid = [r for r in rows if all(r.get(c) for c in key)]
+    invalid = len(rows) - len(valid)
+    deduped = {}
+    for r in valid:
+        deduped[tuple(r[c] for c in key)] = r   # 같은 파일 안 중복 키는 마지막 값만 남긴다
+    rows = list(deduped.values())
+
+    fields = sorted({c for r in rows for c in r} | set(key) | {"id"})
+    existing_rows = _fetch_all_paginated(get_client(), cfg["table"], ",".join(fields))
+    existing = {tuple(e.get(c) or "" for c in key): e for e in existing_rows}
+    known_nos = {e.get(key[0]) for e in existing_rows}
+    max_id = max((e["id"] for e in existing_rows), default=0)
+    today = date.today().isoformat()
+
+    new, revised, changed, writes, unchanged = [], [], [], [], 0
+    for r in rows:
+        e = existing.get(tuple(r[c] for c in key))
+        if e is None:
+            max_id += 1
+            r["id"] = max_id
+            r.setdefault("issued_date", today)   # 신규 도면 발행일이 비어 있으면 등록일
+            (revised if len(key) > 1 and r[key[0]] in known_nos else new).append(r)
+            writes.append(r)
+            continue
+        diff = {c: [e.get(c), v] for c, v in r.items() if c not in key and str(e.get(c) or "").strip() != v}
+        if diff:
+            r["id"] = e["id"]
+            changed.append((r, diff))
+            writes.append(r)
+        else:
+            unchanged += 1
+
+    if writes and not dry_run:
+        _upsert_partial(cfg["table"], _audit(cfg["table"], writes, "web upload"))
+        _invalidate_response_cache()
+
+    label = lambda r: " / ".join(str(r.get(c)) for c in key)
+    return {"success": True, "dry_run": dry_run, "processed": len(rows) + invalid, "invalid": invalid,
+            "new": len(new), "revised": len(revised), "changed": len(changed), "skipped": unchanged,
+            "inserted": 0 if dry_run else len(writes),
+            "samples": ([{"kind": "New", "no": label(r)} for r in new[:10]] +
+                        [{"kind": "Revised", "no": label(r)} for r in revised[:10]] +
+                        [{"kind": "Changed", "no": label(r),
+                          "diff": {c: [str(a or ""), b] for c, (a, b) in d.items()}} for r, d in changed[:10]])}
+
+
+@app.route("/api/upload", methods=["POST"], defaults={"cat": "iso"})
+@app.route("/api/<cat>/upload", methods=["POST"])
+def api_upload(cat):
+    cat = _cat(cat)
+    file = request.files.get("file")
+    if not file:
+        return jsonify({"error": "No file selected."}), 400
+    try:
+        rows = _parse_upload(cat, file)
+        return jsonify(_apply_upload(cat, rows, dry_run=request.args.get("dry_run") == "1"))
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+# ── Cloudinary 링크 동기화 ────────────────────────────────────
+
 def _configure_cloudinary():
     import cloudinary
-    import cloudinary.api
     cld_url = os.environ.get("CLOUDINARY_URL", "")
     if not cld_url:
-        raise ValueError("CLOUDINARY_URL이 설정되지 않았습니다. .env 파일을 확인하세요.")
+        raise ValueError("CLOUDINARY_URL is not set.")
     m = re.match(r"cloudinary://([^:]+):([^@]+)@(.+)", cld_url)
     if not m:
-        raise ValueError("CLOUDINARY_URL 형식이 잘못되었습니다.")
-    cloud_name = m.group(3)
-    cloudinary.config(api_key=m.group(1), api_secret=m.group(2), cloud_name=cloud_name)
-    return cloud_name
+        raise ValueError("CLOUDINARY_URL format is invalid.")
+    cloudinary.config(api_key=m.group(1), api_secret=m.group(2), cloud_name=m.group(3))
 
 def _fetch_cloudinary_all(resource_type="image"):
     import cloudinary.api
@@ -243,1092 +971,103 @@ def _fetch_cloudinary_all(resource_type="image"):
             break
     return uploaded
 
-def _fetch_all_paginated(supabase, table, columns, page_size=1000, not_null=None, eq=None):
-    # Supabase 1000행 제한 때문에 나눠 읽는다. 첫 페이지에서 전체 건수를 받고 나머지는 병렬로 조회한다.
-    # not_null(컬럼명) / eq((컬럼, 값))으로 서버에서 미리 거르면 읽는 행 수가 크게 줄어든다.
-    def page(offset, count=None):
-        q = supabase.table(table).select(columns, count=count)
-        if not_null: q = q.not_.is_(not_null, "null")
-        if eq:       q = q.eq(*eq)
-        return q.order("id").range(offset, offset + page_size - 1).execute()
+def _link_candidates(cat, row, is_latest):
+    # 도면 행에 맞는 Cloudinary 파일명 후보(우선순위 순)
+    if cat not in ("iso", "support"):
+        return [str(row["drawing_no"]).strip()]
+    if cat == "iso":
+        safe = str(row["drawing_no"]).strip()
+    else:
+        safe = str(row["support_drawing"]).replace('"', '').replace('/', '_')
+        if str(row.get("type") or "").strip().upper() != "SPECIAL":
+            safe = re.sub(r'\s*\([^)]+\)\s*$', '', safe).strip()
+    rev = str(row["revision"]).upper()
+    names = [f"{safe}_{rev}", f"{safe}-{rev}"]
+    # Revision 없는 파일명은 최신 Revision에만 연결한다(구 Revision·VOID에 옛 PDF가 붙지 않도록).
+    if is_latest and rev != "VOID":
+        names.append(safe)
+    return names
 
-    first = page(0, "exact")
-    rows = list(first.data)
-    offsets = range(page_size, first.count or 0, page_size)
-    if offsets:
-        with ThreadPoolExecutor(max_workers=4) as ex:
-            for res in ex.map(page, offsets):
-                rows.extend(res.data)
-    return rows
+def _sync_links(cat, dry_run=False):
+    # Cloudinary에 실제 있는 파일로 file_link를 맞춘다. 전체를 비우고 다시 채우지 않고
+    # 값이 바뀌는 행만 보내므로 중간에 실패해도 기존 링크가 사라지지 않는다.
+    cfg = CATS[cat]
+    key = cfg["key"]
+    _configure_cloudinary()
+    cols = ["id", "file_link"] + list(key) + (["type"] if cat == "support" else [])
+    rows = _fetch_all_paginated(get_client(), cfg["table"], ",".join(cols))
+    uploaded = _fetch_cloudinary_all()
+    if not uploaded:
+        raise RuntimeError("Cloudinary returned no files — links were left unchanged.")
+    lookups = [uploaded,
+               {k.replace('--', '-'): v for k, v in uploaded.items()},
+               {k.lower(): v for k, v in uploaded.items()}]
 
-def _assign_sequential_ids(supabase, table, batch, key_cols):
-    # id 컬럼에 DEFAULT 없음 → 기존 id 매핑 후 신규 레코드에 순번 부여.
-    # 동일 배치 내 중복 키는 upsert의 on_conflict 대상이 두 번 걸려 실패하므로 마지막 값만 남긴다.
-    deduped = {}
-    for r in batch:
-        deduped[tuple(r[c] for c in key_cols)] = r
-    batch = list(deduped.values())
+    latest = {}
+    if len(key) > 1:
+        for r in rows:
+            if r.get(key[0]) and r.get("revision") and (r["revision"] > latest.get(r[key[0]], "")):
+                latest[r[key[0]]] = r["revision"]
 
-    existing = {}
-    for row in _fetch_all_paginated(supabase, table, ",".join(("id",) + key_cols)):
-        existing[tuple(row[c] for c in key_cols)] = row["id"]
-
-    max_id = max(existing.values()) if existing else 0
-    new_counter = 0
-    for r in batch:
-        key = tuple(r[c] for c in key_cols)
-        if key in existing:
-            r["id"] = existing[key]
+    updates, added, updated, removed = [], 0, 0, 0
+    for r in rows:
+        if not all(r.get(c) for c in key):
+            continue
+        is_latest = len(key) == 1 or latest.get(r[key[0]]) == r["revision"]
+        url = None
+        for name in _link_candidates(cat, r, is_latest):
+            for n in (name, f"{name}.pdf"):
+                for i, lk in enumerate(lookups):
+                    url = lk.get(n.lower() if i == 2 else n)
+                    if url:
+                        break
+                if url:
+                    break
+            if url:
+                break
+        if url and not url.lower().endswith(".pdf"):
+            url += ".pdf"
+        if url == r.get("file_link"):
+            continue
+        if not r.get("file_link"):
+            added += 1
+        elif not url:
+            removed += 1
         else:
-            new_counter += 1
-            r["id"] = max_id + new_counter
-    return batch
+            updated += 1
+        updates.append({"id": r["id"], **{c: r[c] for c in key}, "file_link": url})
 
-def _parse_excel_date(raw_date):
-    if hasattr(raw_date, "strftime"):
-        return raw_date.strftime("%Y-%m-%d")
-    s = str(raw_date).strip()
-    return s[:10] if raw_date and s != "nan" else ""
-
-def _simple_count(table):
-    res = get_client().table(table).select("id", count="exact").limit(1).execute()
-    return res.count or 0
+    if updates and not dry_run:
+        _upsert_partial(cfg["table"], _audit(cfg["table"], updates, "web sync-links"))
+        _invalidate_response_cache(filters=False)
+    linked = sum(1 for r in rows if r.get("file_link")) + added - removed
+    return {"success": True, "dry_run": dry_run, "linked": linked, "added": added, "updated": updated,
+            "removed": removed,
+            "message": f"{linked:,} linked · {added:,} added · {updated:,} updated · {removed:,} removed"}
 
 
-@app.route("/")
-def index():
-    resp = make_response(render_template("index.html"))
-    resp.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
-    resp.headers['Pragma'] = 'no-cache'
-    resp.headers['Expires'] = '0'
-    return resp
-
-
-@app.route("/api/drawings")
-@cached_get
-def get_drawings():
+@app.route("/api/<cat>/sync-links", methods=["POST"])
+def api_sync_links(cat):
+    cat = _cat(cat)
     try:
-        search   = request.args.get("search", "").strip()
-        system   = request.args.get("system", "")
-        status   = request.args.get("status", "")
-        size     = request.args.get("size", "")
-        remark   = request.args.get("remark", "")
-        page     = _safe_int(request.args.get("page", 1), 1)
-        per_page = _safe_int(request.args.get("per_page", 20), 20)
-        offset   = (page - 1) * per_page
-
-        supabase = get_client()
-        target   = TABLE_LATEST if status == "" else TABLE_ALL
-        query    = _apply_iso_filters(supabase.table(target).select("*", count="exact"),
-                                      search, system, status, size, remark)
-
-        res = query.order("drawing_no").range(offset, offset + per_page - 1).execute()
-        for row in res.data:
-            row["size"] = _line_size_raw(row.get("line_no")) or ''
-            if row.get("file_link"):
-                row["file_link"] = get_cloudinary_url(row["file_link"])
-
-        return jsonify({"data": res.data, "total": res.count, "page": page})
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-
-def _get_iso_stats(supabase):
-    def q_total(): return supabase.table(TABLE_ALL).select("id", count="exact").limit(1).execute()
-    def q_c01():   return supabase.table(TABLE_ALL).select("id", count="exact").eq("revision", "C01").limit(1).execute()
-    def q_c01a():  return supabase.table(TABLE_ALL).select("id", count="exact").eq("revision", "C01A").limit(1).execute()
-    def q_c01b():  return supabase.table(TABLE_ALL).select("id", count="exact").eq("revision", "C01B").limit(1).execute()
-    with ThreadPoolExecutor(max_workers=4) as ex:
-        t, c01, c01a, c01b = list(ex.map(lambda f: f(), [q_total, q_c01, q_c01a, q_c01b]))
-    return {
-        "total": t.count    if hasattr(t,    "count") else 0,
-        "C01":   c01.count  if hasattr(c01,  "count") else 0,
-        "C01A":  c01a.count if hasattr(c01a, "count") else 0,
-        "C01B":  c01b.count if hasattr(c01b, "count") else 0,
-    }
-
-
-@app.route("/api/stats")
-def get_stats():
-    global _stats_cache, _stats_cache_ts
-    try:
-        supabase = get_client()
-        if _stats_cache and (_time.time() - _stats_cache_ts) < STATS_CACHE_TTL:
-            return jsonify(_stats_cache)
-        stats = _get_iso_stats(supabase)
-        _stats_cache = stats
-        _stats_cache_ts = _time.time()
-        return jsonify(stats)
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-
-_remarks_cache: dict = {}
-_remarks_cache_ts: dict = {}
-REMARKS_CACHE_TTL = 300  # 5분
-
-def _get_distinct_remarks(table):
-    now = _time.time()
-    if table in _remarks_cache and (now - _remarks_cache_ts.get(table, 0)) < REMARKS_CACHE_TTL:
-        return _remarks_cache[table]
-
-    rows = _fetch_all_paginated(get_client(), table, "remark", not_null="remark")
-    result = sorted({row["remark"] for row in rows if row.get("remark")})
-    _remarks_cache[table] = result
-    _remarks_cache_ts[table] = now
-    return result
-
-
-@app.route("/api/init")
-@cached_get
-def api_init():
-    global _stats_cache, _stats_cache_ts
-    try:
-        supabase = get_client()
-        try:
-            remarks = _get_distinct_remarks(TABLE_ALL)
-        except Exception:
-            remarks = []
-        try:
-            sizes = _get_distinct_sizes(TABLE_ALL)
-        except Exception:
-            sizes = []
-        FILTERS = {"systems": SYSTEMS, "statuses": REVISIONS, "remarks": remarks, "sizes": sizes}
-        DWG_COLS = "system,drawing_no,line_no,title,revision,issued_date,file_link,remark"
-
-        def q_drawings():
-            res = supabase.table(TABLE_LATEST).select(DWG_COLS, count="exact").order("drawing_no").range(0, 19).execute()
-            for row in res.data:
-                row["size"] = _line_size_raw(row.get("line_no")) or ''
-                if row.get("file_link"):
-                    row["file_link"] = get_cloudinary_url(row["file_link"])
-            return res
-
-        if _stats_cache and (_time.time() - _stats_cache_ts) < STATS_CACHE_TTL:
-            dwg_res = q_drawings()
-            stats = _stats_cache
-        else:
-            with ThreadPoolExecutor(max_workers=2) as ex:
-                f_dwg   = ex.submit(q_drawings)
-                f_stats = ex.submit(_get_iso_stats, supabase)
-                dwg_res = f_dwg.result()
-                stats   = f_stats.result()
-            _stats_cache = stats
-            _stats_cache_ts = _time.time()
-
-        return jsonify({"filters": FILTERS, "stats": stats,
-                        "drawings": {"data": dwg_res.data, "total": dwg_res.count}})
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-
-@app.route("/api/filters")
-@cached_get
-def get_filters():
-    system = request.args.get("system", "")
-    try:
-        remarks = _get_distinct_remarks(TABLE_ALL)
-    except Exception:
-        remarks = []
-    try:
-        sizes = _get_distinct_sizes(TABLE_ALL, system or None)
-    except Exception:
-        sizes = []
-    return jsonify({"systems": SYSTEMS, "statuses": REVISIONS, "remarks": remarks, "sizes": sizes})
-
-
-@app.route("/api/upload", methods=["POST"])
-def upload_excel():
-    try:
-        file = request.files.get("file")
-        if not file:
-            return jsonify({"error": "Invalid file format"}), 400
-        df = pd.read_excel(io.BytesIO(file.read()), sheet_name=0)
-        df.columns = [str(c).lower().strip() for c in df.columns]
-        df = df.fillna("")
-        supabase = get_client()
-        batch = []
-        for r in df.to_dict("records"):
-            dr_no = str(r.get("drawing_no", r.get("drawing_n", ""))).strip()
-            if not dr_no:
-                continue
-            f_link = get_cloudinary_url(str(r.get("file_link", "")).strip()) or None
-            issued = str(r.get("issued_date", "")).strip() or None
-            batch.append({
-                "drawing_no":  dr_no,
-                "line_no":     str(r.get("line_no", "")).strip(),
-                "system":      str(r.get("system", "")).strip(),
-                "bore":        str(r.get("bore", "")).strip(),
-                "title":       str(r.get("title", "")).strip(),
-                "revision":    str(r.get("revision", "")).strip(),
-                "issued_date": issued,
-                "file_link":   f_link,
-            })
-
-        batch = _assign_sequential_ids(supabase, TABLE_ALL, batch, ("drawing_no", "revision"))
-
-        inserted = 0
-        for i in range(0, len(batch), 1000):
-            supabase.table(TABLE_ALL).upsert(batch[i:i+1000], on_conflict="drawing_no,revision").execute()
-            inserted += len(batch[i:i+1000])
-        _invalidate_stats_cache()
-        _invalidate_response_cache()
-        return jsonify({"success": True, "inserted": inserted, "processed": len(batch)})
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-
-@app.route("/api/drawings/sync-links", methods=["POST"])
-def api_drawings_sync_links():
-    try:
-        _configure_cloudinary()
-        supabase = get_client()
-
-        master_data = _fetch_all_paginated(supabase, TABLE_ALL, "id,drawing_no,revision")
-
-        uploaded = _fetch_cloudinary_all()
-        uploaded_norm  = {k.replace('--', '-'): v for k, v in uploaded.items()}
-        uploaded_lower = {k.lower(): v for k, v in uploaded.items()}
-
-        updates = []
-        for row in master_data:
-            dwg, rev = row.get("drawing_no"), row.get("revision")
-            if not dwg or not rev:
-                continue
-            safe  = str(dwg).strip()
-            rev_up = rev.upper()
-            secure_url = None
-            for fname in (f"{safe}_{rev_up}", f"{safe}-{rev_up}", safe):
-                if fname in uploaded:
-                    secure_url = uploaded[fname]; break
-                if fname in uploaded_norm:
-                    secure_url = uploaded_norm[fname]; break
-                if fname.lower() in uploaded_lower:
-                    secure_url = uploaded_lower[fname.lower()]; break
-            if secure_url:
-                url = secure_url if secure_url.lower().endswith(".pdf") else secure_url + ".pdf"
-                updates.append({"id": row["id"], "drawing_no": dwg, "revision": rev, "file_link": url})
-
-        supabase.table(TABLE_ALL).update({"file_link": None}).neq("id", 0).execute()
-        for i in range(0, len(updates), 500):
-            supabase.table(TABLE_ALL).upsert(updates[i:i+500], on_conflict="drawing_no,revision").execute()
-
-        _invalidate_response_cache()
-        return jsonify({"success": True, "synced": len(updates),
-                        "message": f"실제 업로드된 {len(updates)}개의 도면만 링크를 연결했습니다."})
+        return jsonify(_sync_links(cat, dry_run=request.args.get("dry_run") == "1"))
     except Exception as e:
         import traceback; traceback.print_exc()
         return jsonify({"error": str(e)}), 500
 
 
-@app.route("/api/export")
-def export_excel():
-    search = request.args.get("search", "").strip()
-    system = request.args.get("system", "")
-    status = request.args.get("status", "")
-    size   = request.args.get("size", "")
-    remark = request.args.get("remark", "")
+def _warm_up():
+    # 첫 접속이 필터 목록 계산(전체 행 읽기)을 기다리지 않도록 시작 시 미리 채운다.
     try:
-        supabase = get_client()
-        cols = "system,drawing_no,line_no,title,revision,issued_date,bore"
-        target = TABLE_LATEST if status == "" else TABLE_ALL
-        page_size = 1000
-
-        def _base_query(select_cols, count=False):
-            kw = {"count": "exact"} if count else {}
-            return _apply_iso_filters(supabase.table(target).select(select_cols, **kw),
-                                      search, system, status, size, remark)
-
-        count_res = _base_query("id", count=True).limit(1).execute()
-        total = count_res.count or 0
-
-        def fetch_batch(offset):
-            return _base_query(cols).order("drawing_no").range(offset, offset + page_size - 1).execute().data
-
-        with ThreadPoolExecutor(max_workers=4) as ex:
-            results = list(ex.map(fetch_batch, range(0, total, page_size)))
-        all_data = [item for batch in results for item in batch]
-        if not all_data:
-            return jsonify({"error": "No data to export"}), 404
-
-        df = pd.DataFrame(all_data)
-        output = io.BytesIO()
-        with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
-            df.to_excel(writer, index=False, sheet_name="DrawingMaster")
-        output.seek(0)
-        filename = f"ISO_Drawing_Master_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx"
-        return send_file(output, as_attachment=True, download_name=filename,
-                         mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+        _iso_filters()
+        _cat_stats("iso")
+        for col in ("revision", "remark", "size"):
+            _get_distinct("support_master", col)
     except Exception as e:
-        return jsonify({"error": f"Export failed: {str(e)}"}), 500
+        print(f"[warm-up] skipped: {e}", flush=True)
 
-
-@app.route("/api/print")
-def print_drawings():
-    try:
-        supabase = get_client()
-        search = request.args.get("search", "").strip()
-        system = request.args.get("system", "").strip()
-        status = request.args.get("status", "").strip()
-        size   = request.args.get("size", "").strip()
-        remark = request.args.get("remark", "").strip()
-        target = TABLE_LATEST if status == "" else TABLE_ALL
-
-        def build_query(base_q):
-            return _apply_iso_filters(base_q, search, system, status, size, remark)
-
-        count_res = build_query(supabase.table(target).select("id", count="exact")).limit(1).execute()
-        total = count_res.count if hasattr(count_res, "count") else 0
-        batch_size = 1000
-
-        def fetch_batch(offset):
-            q = build_query(supabase.table(target).select("system,drawing_no,line_no,title,revision,issued_date"))
-            return q.order("drawing_no").range(offset, offset + batch_size - 1).execute().data
-
-        with ThreadPoolExecutor(max_workers=4) as ex:
-            results = list(ex.map(fetch_batch, range(0, total, batch_size)))
-        all_data = [item for batch in results for item in batch]
-
-        def esc(v):
-            return str(v or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-
-        rows_html = ""
-        for i, d in enumerate(all_data):
-            rows_html += (
-                f"<tr><td>{i+1}</td><td>{esc(d.get('system'))}</td>"
-                f"<td class='col-dwg'>{esc(d.get('drawing_no'))}</td>"
-                f"<td style='white-space:nowrap'>{esc(d.get('line_no'))}</td>"
-                f"<td style='white-space:normal;text-align:left'>{esc(d.get('title'))}</td>"
-                f"<td><span class='badge-rev'>{esc(d.get('revision'))}</span></td></tr>"
-            )
-
-        html = f"""<!DOCTYPE html>
-<html><head>
-<title>IPCS Print Report</title>
-<style>
-@page {{ size: landscape; margin: 8mm; }}
-* {{ -webkit-print-color-adjust: exact; }}
-body {{ font-family: 'Inter', sans-serif; margin: 15px 0; background: #f8fafc; font-size: 8px; }}
-#print-main {{ background: #fff; padding: 20px; width: 96%; margin: 0 auto; }}
-h2 {{ text-align: center; margin-bottom: 10px; font-size: 15px; font-weight: 600; color: #1e293b; }}
-.meta {{ text-align: right; margin-bottom: 5px; font-size: 7px; color: #64748b; }}
-table {{ width: 100%; border-collapse: collapse; border: 0.5px solid #94a3b8; }}
-th, td {{ border: 0.4px solid #cbd5e1; padding: 4px 6px; text-align: center; }}
-th {{ background-color: #f1f5f9; font-weight: 600; text-transform: uppercase; }}
-.col-dwg {{ color: #2563eb; font-weight: 500; }}
-.badge-rev {{ padding: 1px 5px; border-radius: 3px; font-weight: 600;
-              background-color: #f0fdf4; color: #16a34a; border: 0.2px solid #dcfce7; }}
-#top-ctrl {{ width: 96%; margin: 10px auto; display: flex; justify-content: flex-end;
-             align-items: center; gap: 15px; }}
-#print-btn {{ background: #2563eb; color: #fff; border: none; padding: 6px 15px;
-              border-radius: 4px; font-size: 11px; cursor: pointer; }}
-@media print {{ body {{ background: #fff; margin: 0; }}
-                #print-main {{ width: 100%; padding: 0; }}
-                #top-ctrl {{ display: none; }} }}
-</style></head>
-<body>
-<div id="top-ctrl">
-  <div style="font-size:9px;color:#dc2626;font-weight:500;">
-    ⌛ 필터 적용 데이터({len(all_data)}건) 준비 중... 3.5초 후 인쇄창이 자동으로 뜹니다.
-  </div>
-  <button id="print-btn" onclick="window.print()">🖨️ 수동 인쇄 호출 (Force Print)</button>
-</div>
-<div id="print-main">
-  <h2>IPCS ISO Drawing Master List ({len(all_data)} Records)</h2>
-  <div class="meta">Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</div>
-  <table>
-    <thead><tr>
-      <th style="width:35px">NO.</th><th>SYSTEM</th>
-      <th class="col-dwg">DWG. NO.</th><th style="white-space:nowrap">LINE. NO.</th>
-      <th style="min-width:180px">DRAWING TITLE</th><th>REV.</th>
-    </tr></thead>
-    <tbody>{rows_html}</tbody>
-  </table>
-</div>
-<script>
-  window.onload = function() {{
-    const wait = Math.max(3500, Math.min(6000, {len(all_data)} * 1.5));
-    setTimeout(function() {{
-      window.print();
-      window.onafterprint = function() {{ window.close(); }};
-    }}, wait);
-  }};
-</script>
-</body></html>"""
-        return html
-    except Exception as e:
-        return f"Print failed: {str(e)}", 500
-
-
-# ── Support Drawing ───────────────────────────────────────────
-
-@app.route("/api/support/stats")
-@cached_get
-def api_support_stats():
-    try:
-        return jsonify({"total": _simple_count("support_latest")})
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-
-@app.route("/api/support/filters")
-@cached_get
-def api_support_filters():
-    system = request.args.get("system", "")
-    try:
-        remarks = _get_distinct_remarks(TABLE_SUPPORT)
-    except Exception:
-        remarks = []
-    try:
-        sizes = _get_distinct_sizes(TABLE_SUPPORT, system or None)
-    except Exception:
-        sizes = []
-    return jsonify({
-        "systems":   SYSTEMS,
-        "types":     ["TYPICAL", "SPECIAL", "G", "GS", "U", "US", "W", "WS"],
-        "revisions": ["C01", "C01A", "C01B"],
-        "remarks":   remarks,
-        "sizes":     sizes,
-    })
-
-
-@app.route("/api/support/drawings")
-@cached_get
-def api_support_drawings():
-    try:
-        search      = request.args.get("search", "").strip()
-        system      = request.args.get("system", "")
-        type_filter = request.args.get("type", "")
-        size        = request.args.get("size", "")
-        remark      = request.args.get("remark", "")
-        page        = _safe_int(request.args.get("page", 1), 1)
-        per_page    = _safe_int(request.args.get("per_page", 20), 20)
-        offset      = (page - 1) * per_page
-
-        supabase = get_client()
-        query = supabase.table("support_latest").select("*", count="exact")
-
-        if search:
-            s = search.replace(',', '\\,')
-            query = query.or_(f"support_drawing.ilike.%{s}%,line_no.ilike.%{s}%,iso_drawing.ilike.%{s}%,system.ilike.%{s}%,type.ilike.%{s}%")
-        if system: query = query.eq("system", system)
-        if type_filter:
-            if type_filter in ("G", "GS", "U", "US", "W", "WS"):
-                query = query.ilike("type", f"({type_filter}-%")
-            else:
-                query = query.eq("type", type_filter)
-        if size: query = _apply_size_filter(query, size)
-        if remark: query = query.eq("remark", remark)
-
-        res = query.order("system").order("support_drawing").range(offset, offset + per_page - 1).execute()
-
-        for d in res.data:
-            d["size"] = _line_size_raw(d.get("line_no")) or ''
-            _sanitize_link(d)
-
-        return jsonify({"total": res.count, "data": res.data})
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-
-@app.route("/api/support/upload", methods=["POST"])
-def api_support_upload():
-    try:
-        file = request.files.get("file")
-        if not file:
-            return jsonify({"error": "No file shared"}), 400
-        df = pd.read_excel(io.BytesIO(file.read()), sheet_name=0)
-        df.columns = [str(c).lower().strip().replace('\n', ' ') for c in df.columns]
-        df = df.fillna("")
-        supabase = get_client()
-        batch = []
-        for r in df.to_dict("records"):
-            # 신 포맷(support tag no.)과 구 포맷(support drawing) 모두 지원
-            sup_dwg = str(r.get("support tag no.", r.get("support drawing", ""))).strip()
-            if not sup_dwg:
-                continue
-            revision = str(r.get("latest", r.get("revision", r.get("rev", "")))).strip()
-            raw_date = r.get("issue date", "")
-            if hasattr(raw_date, "strftime"):
-                issued = raw_date.strftime("%Y-%m-%d")
-            else:
-                issued = str(raw_date).strip().split(" ")[0] if raw_date else None
-            issued = issued or None
-            batch.append({
-                "system":          str(r.get("system", "")).strip(),
-                "support_drawing": sup_dwg,
-                "type":            str(r.get("type", "")).strip(),
-                "iso_drawing":     str(r.get("iso drawing no.", r.get("iso drawing", ""))).strip(),
-                "line_no":         str(r.get("line no.", r.get("line no", ""))).strip(),
-                "clamp_height":    str(r.get("shoe  height", r.get("clamp height", r.get("clamp h", "")))).strip() or None,
-                "l1":              str(r.get("l1", "")).strip() or None,
-                "l2":              str(r.get("l2", "")).strip() or None,
-                "l3":              str(r.get("l3", "")).strip() or None,
-                "l4":              str(r.get("l4", "")).strip() or None,
-                "revision":        revision,
-                "issued_date":     issued,
-                "file_link":       None,
-            })
-
-        batch = _assign_sequential_ids(supabase, TABLE_SUPPORT, batch, ("support_drawing", "revision"))
-
-        inserted = 0
-        for i in range(0, len(batch), 500):
-            supabase.table(TABLE_SUPPORT).upsert(batch[i:i+500], on_conflict="support_drawing,revision").execute()
-            inserted += len(batch[i:i+500])
-        _invalidate_response_cache()
-        return jsonify({"success": True, "inserted": inserted, "processed": len(batch)})
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-
-@app.route("/api/support/sync-links", methods=["POST"])
-def api_support_sync_links():
-    try:
-        _configure_cloudinary()
-        supabase = get_client()
-
-        master_data = _fetch_all_paginated(supabase, TABLE_SUPPORT, "id,support_drawing,revision,type")
-
-        uploaded = _fetch_cloudinary_all()
-        uploaded_norm  = {k.replace('--', '-'): v for k, v in uploaded.items()}
-        uploaded_lower = {k.lower(): v for k, v in uploaded.items()}
-
-        updates = []
-        for row in master_data:
-            dwg, rev = row.get("support_drawing"), row.get("revision")
-            if not dwg or not rev:
-                continue
-            safe = str(dwg).replace('"', '').replace('/', '_')
-
-            drawing_type = str(row.get("type", "")).strip().upper()
-            if drawing_type != "SPECIAL":
-                safe = re.sub(r'\s*\([^)]+\)\s*$', '', safe).strip()
-
-            rev_up = rev.upper()
-            secure_url = None
-            for fname in (f"{safe}_{rev_up}", f"{safe}-{rev_up}", safe):
-                if fname in uploaded:
-                    secure_url = uploaded[fname]
-                    break
-                if f"{fname}.pdf" in uploaded:
-                    secure_url = uploaded[f"{fname}.pdf"]
-                    break
-                if fname in uploaded_norm:
-                    secure_url = uploaded_norm[fname]
-                    break
-                if f"{fname}.pdf" in uploaded_norm:
-                    secure_url = uploaded_norm[f"{fname}.pdf"]
-                    break
-                if fname.lower() in uploaded_lower:
-                    secure_url = uploaded_lower[fname.lower()]
-                    break
-                if f"{fname}.pdf".lower() in uploaded_lower:
-                    secure_url = uploaded_lower[f"{fname}.pdf".lower()]
-                    break
-            if secure_url:
-                url = secure_url if secure_url.lower().endswith(".pdf") else secure_url + ".pdf"
-                updates.append({"id": row["id"], "support_drawing": dwg, "revision": rev, "file_link": url})
-
-        supabase.table(TABLE_SUPPORT).update({"file_link": None}).neq("id", 0).execute()
-        for i in range(0, len(updates), 500):
-            supabase.table(TABLE_SUPPORT).upsert(updates[i:i + 500], on_conflict="support_drawing,revision").execute()
-
-        _invalidate_response_cache()
-        return jsonify({"success": True, "synced": len(updates),
-                        "message": f"실제 업로드된 {len(updates)}개의 도면만 링크를 연결했습니다."})
-    except Exception as e:
-        import traceback; traceback.print_exc()
-        return jsonify({"error": str(e)}), 500
-
-
-# ── P&ID Drawing ──────────────────────────────────────────────
-
-@app.route("/api/pid/stats")
-@cached_get
-def api_pid_stats():
-    try:
-        return jsonify({"total": _simple_count(TABLE_PID)})
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-
-@app.route("/api/pid/filters")
-@cached_get
-def api_pid_filters():
-    try:
-        supabase = get_client()
-        res = supabase.table(TABLE_PID).select("system,revision").execute()
-        systems   = sorted(set(r["system"]   for r in res.data if r.get("system")))
-        revisions = sorted(set(r["revision"] for r in res.data if r.get("revision")))
-        return jsonify({"systems": systems, "revisions": revisions})
-    except Exception:
-        return jsonify({"systems": [], "revisions": []}), 500
-
-
-@app.route("/api/pid/drawings")
-@cached_get
-def api_pid_drawings():
-    try:
-        search   = request.args.get("search", "").strip()
-        system   = request.args.get("system", "")
-        revision = request.args.get("revision", "")
-        page     = _safe_int(request.args.get("page", 1), 1)
-        per_page = _safe_int(request.args.get("per_page", 20), 20)
-        offset   = (page - 1) * per_page
-
-        supabase = get_client()
-        query = supabase.table(TABLE_PID).select("*", count="exact")
-        if search:
-            s = search.replace(',', '\\,')
-            query = query.or_(f"drawing_no.ilike.%{s}%,title.ilike.%{s}%,system.ilike.%{s}%")
-        if system:   query = query.eq("system", system)
-        if revision: query = query.eq("revision", revision)
-
-        res = query.order("system").order("drawing_no").range(offset, offset + per_page - 1).execute()
-        for d in res.data:
-            _sanitize_link(d)
-        return jsonify({"total": res.count, "data": res.data})
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-
-@app.route("/api/pid/upload", methods=["POST"])
-def api_pid_upload():
-    try:
-        file = request.files.get("file")
-        if not file:
-            return jsonify({"error": "No file shared"}), 400
-        df = pd.read_excel(io.BytesIO(file.read()), header=1)
-        df.columns = [str(c).strip() for c in df.columns]
-        df = df.fillna("")
-        supabase = get_client()
-        batch = []
-        for idx, r in enumerate(df.to_dict("records")):
-            dwg_no = str(r.get("Drawing No", "")).strip()
-            if not dwg_no or dwg_no == "nan":
-                continue
-            raw_date = r.get("Date", "")
-            date_val = _parse_excel_date(raw_date)
-            batch.append({
-                "id":          int(r.get("No", idx + 1)),
-                "system":      str(r.get("System", "")).strip(),
-                "drawing_no":  dwg_no,
-                "title":       str(r.get("Title", "")).strip(),
-                "revision":    str(r.get("Rev.", "")).strip(),
-                "issued_date": date_val,
-                "file_link":   None,
-            })
-        inserted = 0
-        for i in range(0, len(batch), 500):
-            supabase.table(TABLE_PID).upsert(batch[i:i+500], on_conflict="drawing_no").execute()
-            inserted += len(batch[i:i+500])
-        _invalidate_response_cache()
-        return jsonify({"success": True, "processed": len(batch), "inserted": inserted})
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-
-@app.route("/api/pid/sync-links", methods=["POST"])
-def api_pid_sync_links():
-    try:
-        _configure_cloudinary()
-        supabase = get_client()
-
-        master_data = _fetch_all_paginated(supabase, TABLE_PID, "id,drawing_no")
-
-        pid_nos  = {row["drawing_no"].lower() for row in master_data if row.get("drawing_no")}
-        all_cld  = _fetch_cloudinary_all()
-        uploaded = {k.lower(): v for k, v in all_cld.items() if k.lower() in pid_nos}
-
-        updates = []
-        for row in master_data:
-            dwg = row.get("drawing_no")
-            if not dwg:
-                continue
-            url = uploaded.get(dwg.lower())
-            if url:
-                link = url if url.lower().endswith(".pdf") else url + ".pdf"
-                updates.append({"id": row["id"], "drawing_no": dwg, "file_link": link})
-
-        supabase.table(TABLE_PID).update({"file_link": None}).neq("id", 0).execute()
-        for i in range(0, len(updates), 500):
-            supabase.table(TABLE_PID).upsert(updates[i:i+500], on_conflict="id").execute()
-
-        _invalidate_response_cache()
-        return jsonify({"success": True, "synced": len(updates),
-                        "message": f"{len(updates)}개 PID 도면 링크 연결 완료"})
-    except Exception as e:
-        import traceback; traceback.print_exc()
-        return jsonify({"error": str(e)}), 500
-
-
-# ── Valve Drawing ─────────────────────────────────────────────
-
-@app.route("/api/valve/stats")
-@cached_get
-def api_valve_stats():
-    try:
-        return jsonify({"total": _simple_count(TABLE_VALVE)})
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-
-@app.route("/api/valve/filters")
-@cached_get
-def api_valve_filters():
-    try:
-        supabase = get_client()
-        res = supabase.table(TABLE_VALVE).select("valve,revision").execute()
-        valves    = sorted(set(r["valve"]    for r in res.data if r.get("valve")))
-        revisions = sorted(set(r["revision"] for r in res.data if r.get("revision")))
-        return jsonify({"valves": valves, "revisions": revisions})
-    except Exception:
-        return jsonify({"valves": [], "revisions": []}), 500
-
-
-@app.route("/api/valve/drawings")
-@cached_get
-def api_valve_drawings():
-    try:
-        search   = request.args.get("search", "").strip()
-        valve    = request.args.get("valve", "")
-        revision = request.args.get("revision", "")
-        page     = _safe_int(request.args.get("page", 1), 1)
-        per_page = _safe_int(request.args.get("per_page", 20), 20)
-        offset   = (page - 1) * per_page
-
-        supabase = get_client()
-        query = supabase.table(TABLE_VALVE).select("*", count="exact")
-        if search:
-            s = search.replace(',', '\\,')
-            query = query.or_(f"drawing_no.ilike.%{s}%,title.ilike.%{s}%,valve.ilike.%{s}%")
-        if valve:    query = query.eq("valve", valve)
-        if revision: query = query.eq("revision", revision)
-
-        res = query.order("id").range(offset, offset + per_page - 1).execute()
-        for d in res.data:
-            _sanitize_link(d)
-        return jsonify({"total": res.count, "data": res.data})
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-
-@app.route("/api/valve/upload", methods=["POST"])
-def api_valve_upload():
-    try:
-        file = request.files.get("file")
-        if not file:
-            return jsonify({"error": "No file shared"}), 400
-        df = pd.read_excel(io.BytesIO(file.read()), header=1)
-        df.columns = [str(c).strip() for c in df.columns]
-        df = df.fillna("")
-        supabase = get_client()
-        batch = []
-        for idx, r in enumerate(df.to_dict("records")):
-            dwg_no = str(r.get("Drawing No", r.get("Drawing No.", ""))).strip()
-            if not dwg_no or dwg_no == "nan":
-                continue
-            raw_date = r.get("Date", "")
-            date_val = _parse_excel_date(raw_date)
-            batch.append({
-                "id":          int(r.get("No", idx + 1)),
-                "valve":       str(r.get("Valve", r.get("Item", ""))).strip(),
-                "drawing_no":  dwg_no,
-                "title":       str(r.get("Title", "")).strip(),
-                "revision":    str(r.get("Rev.", r.get("Revision", ""))).strip(),
-                "issued_date": date_val,
-                "file_link":   None,
-            })
-        inserted = 0
-        for i in range(0, len(batch), 500):
-            supabase.table(TABLE_VALVE).upsert(batch[i:i+500], on_conflict="drawing_no").execute()
-            inserted += len(batch[i:i+500])
-        _invalidate_response_cache()
-        return jsonify({"success": True, "processed": len(batch), "inserted": inserted})
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-
-@app.route("/api/valve/sync-links", methods=["POST"])
-def api_valve_sync_links():
-    try:
-        _configure_cloudinary()
-        supabase = get_client()
-
-        master_data = _fetch_all_paginated(supabase, TABLE_VALVE, "id,drawing_no")
-
-        all_cld  = _fetch_cloudinary_all()
-        dwg_nos  = {row["drawing_no"].lower() for row in master_data if row.get("drawing_no")}
-        uploaded = {k.lower(): v for k, v in all_cld.items() if k.lower() in dwg_nos}
-
-        updates = []
-        for row in master_data:
-            dwg = row.get("drawing_no")
-            if not dwg:
-                continue
-            url = uploaded.get(dwg.lower())
-            if url:
-                link = url if url.lower().endswith(".pdf") else url + ".pdf"
-                updates.append({"id": row["id"], "drawing_no": dwg, "file_link": link})
-
-        supabase.table(TABLE_VALVE).update({"file_link": None}).neq("id", 0).execute()
-        for i in range(0, len(updates), 500):
-            supabase.table(TABLE_VALVE).upsert(updates[i:i+500], on_conflict="id").execute()
-
-        _invalidate_response_cache()
-        return jsonify({"success": True, "synced": len(updates),
-                        "message": f"{len(updates)}개 Valve 도면 링크 연결 완료"})
-    except Exception as e:
-        import traceback; traceback.print_exc()
-        return jsonify({"error": str(e)}), 500
-
-
-# ── Speciality Drawing ────────────────────────────────────────
-
-@app.route("/api/speciality/stats")
-@cached_get
-def api_speciality_stats():
-    try:
-        return jsonify({"total": _simple_count(TABLE_SPECIALITY)})
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-
-@app.route("/api/speciality/filters")
-@cached_get
-def api_speciality_filters():
-    try:
-        supabase = get_client()
-        res = supabase.table(TABLE_SPECIALITY).select("revision,title").execute()
-        revisions = sorted(set(r["revision"] for r in res.data if r.get("revision")))
-        titles    = sorted(set(r["title"]    for r in res.data if r.get("title")))
-        return jsonify({"revisions": revisions, "titles": titles})
-    except Exception:
-        return jsonify({"revisions": [], "titles": []}), 500
-
-
-@app.route("/api/speciality/drawings")
-@cached_get
-def api_speciality_drawings():
-    try:
-        search   = request.args.get("search", "").strip()
-        revision = request.args.get("revision", "")
-        title    = request.args.get("title", "")
-        page     = _safe_int(request.args.get("page", 1), 1)
-        per_page = _safe_int(request.args.get("per_page", 20), 20)
-        offset   = (page - 1) * per_page
-
-        supabase = get_client()
-        query = supabase.table(TABLE_SPECIALITY).select("*", count="exact")
-        if search:
-            s = search.replace(',', '\\,')
-            query = query.or_(f"drawing_no.ilike.%{s}%,title.ilike.%{s}%,vendor.ilike.%{s}%")
-        if revision: query = query.eq("revision", revision)
-        if title:    query = query.eq("title", title)
-
-        res = query.order("drawing_no").range(offset, offset + per_page - 1).execute()
-        for d in res.data:
-            _sanitize_link(d)
-        return jsonify({"total": res.count, "data": res.data})
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-
-@app.route("/api/speciality/upload", methods=["POST"])
-def api_speciality_upload():
-    try:
-        file = request.files.get("file")
-        if not file:
-            return jsonify({"error": "No file shared"}), 400
-        df = pd.read_excel(io.BytesIO(file.read()), header=1)
-        df.columns = [str(c).strip() for c in df.columns]
-        df = df.fillna("")
-        supabase = get_client()
-        batch = []
-        for idx, r in enumerate(df.to_dict("records")):
-            dwg_no = str(r.get("Drawing No", r.get("Drawing No.", ""))).strip()
-            if not dwg_no or dwg_no == "nan":
-                continue
-            raw_date = r.get("Date", "")
-            date_val = _parse_excel_date(raw_date)
-            batch.append({
-                "id":          int(r.get("No", idx + 1)),
-                "drawing_no":  dwg_no,
-                "title":       str(r.get("Title", "")).strip(),
-                "vendor":      str(r.get("Vendor", "")).strip(),
-                "class":       str(r.get("Class", "")).strip(),
-                "connection":  str(r.get("Connection", "")).strip(),
-                "revision":    str(r.get("Rev.", r.get("Revision", ""))).strip(),
-                "issued_date": date_val,
-                "file_link":   None,
-            })
-        inserted = 0
-        for i in range(0, len(batch), 500):
-            supabase.table(TABLE_SPECIALITY).upsert(batch[i:i+500], on_conflict="drawing_no").execute()
-            inserted += len(batch[i:i+500])
-        _invalidate_response_cache()
-        return jsonify({"success": True, "processed": len(batch), "inserted": inserted})
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-
-@app.route("/api/speciality/sync-links", methods=["POST"])
-def api_speciality_sync_links():
-    try:
-        _configure_cloudinary()
-        supabase = get_client()
-
-        master_data = _fetch_all_paginated(supabase, TABLE_SPECIALITY, "id,drawing_no")
-
-        all_cld  = _fetch_cloudinary_all()
-        dwg_nos  = {row["drawing_no"].lower() for row in master_data if row.get("drawing_no")}
-        uploaded = {k.lower(): v for k, v in all_cld.items() if k.lower() in dwg_nos}
-
-        updates = []
-        for row in master_data:
-            dwg = row.get("drawing_no")
-            if not dwg:
-                continue
-            url = uploaded.get(dwg.lower())
-            if url:
-                link = url if url.lower().endswith(".pdf") else url + ".pdf"
-                updates.append({"id": row["id"], "drawing_no": dwg, "file_link": link})
-
-        supabase.table(TABLE_SPECIALITY).update({"file_link": None}).neq("id", 0).execute()
-        for i in range(0, len(updates), 500):
-            supabase.table(TABLE_SPECIALITY).upsert(updates[i:i+500], on_conflict="id").execute()
-
-        _invalidate_response_cache()
-        return jsonify({"success": True, "synced": len(updates),
-                        "message": f"{len(updates)}개 Speciality 도면 링크 연결 완료"})
-    except Exception as e:
-        import traceback; traceback.print_exc()
-        return jsonify({"error": str(e)}), 500
-
-
-# ── Marked PID ────────────────────────────────────────────────
-
-@app.route("/api/markedpid/stats")
-@cached_get
-def api_markedpid_stats():
-    try:
-        return jsonify({"total": _simple_count(TABLE_MARKED_PID)})
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-
-@app.route("/api/markedpid/filters")
-@cached_get
-def api_markedpid_filters():
-    try:
-        supabase = get_client()
-        res = supabase.table(TABLE_MARKED_PID).select("system").execute()
-        systems = sorted(set(r["system"] for r in res.data if r.get("system")))
-        return jsonify({"systems": systems})
-    except Exception:
-        return jsonify({"systems": []}), 500
-
-
-@app.route("/api/markedpid/drawings")
-@cached_get
-def api_markedpid_drawings():
-    try:
-        search   = request.args.get("search", "").strip()
-        system   = request.args.get("system", "")
-        page     = _safe_int(request.args.get("page", 1), 1)
-        per_page = _safe_int(request.args.get("per_page", 20), 20)
-        offset   = (page - 1) * per_page
-
-        supabase = get_client()
-        query = supabase.table(TABLE_MARKED_PID).select("*", count="exact")
-        if search:
-            s = search.replace(',', '\\,')
-            query = query.or_(f"drawing_no.ilike.%{s}%,title.ilike.%{s}%,system.ilike.%{s}%")
-        if system: query = query.eq("system", system)
-
-        res = query.order("id").range(offset, offset + per_page - 1).execute()
-
-        pid_res = supabase.table(TABLE_PID).select("system,drawing_no").execute()
-        pid_by_system = {}
-        for p in pid_res.data:
-            if p.get("system"):
-                pid_by_system[p["system"]] = p["drawing_no"]
-
-        for d in res.data:
-            _sanitize_link(d)
-            d["pid_drawing_no"] = pid_by_system.get(d.get("system"))
-        return jsonify({"total": res.count, "data": res.data})
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-
-@app.route("/api/markedpid/upload", methods=["POST"])
-def api_markedpid_upload():
-    try:
-        file = request.files.get("file")
-        if not file:
-            return jsonify({"error": "No file shared"}), 400
-        df = pd.read_excel(io.BytesIO(file.read()))
-        df.columns = [str(c).strip() for c in df.columns]
-        df = df.fillna("")
-        supabase = get_client()
-        batch = []
-        for idx, r in enumerate(df.to_dict("records")):
-            marked_pid = str(r.get("MARKED PID", "")).strip()
-            if not marked_pid or marked_pid == "nan":
-                continue
-            raw_date = r.get("DATE", "")
-            date_val = _parse_excel_date(raw_date)
-            batch.append({
-                "system":      str(r.get("SYSTEM", "")).strip(),
-                "drawing_no":  marked_pid,
-                "title":       str(r.get("DESCRIPTION", "")).strip(),
-                "issued_date": date_val,
-                "file_link":   None,
-            })
-        inserted = 0
-        for i in range(0, len(batch), 500):
-            supabase.table(TABLE_MARKED_PID).upsert(batch[i:i+500], on_conflict="drawing_no").execute()
-            inserted += len(batch[i:i+500])
-        _invalidate_response_cache()
-        return jsonify({"success": True, "processed": len(batch), "inserted": inserted})
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-
-@app.route("/api/markedpid/sync-links", methods=["POST"])
-def api_markedpid_sync_links():
-    try:
-        _configure_cloudinary()
-        supabase = get_client()
-
-        master_data = _fetch_all_paginated(supabase, TABLE_MARKED_PID, "id,drawing_no")
-
-        all_cld  = _fetch_cloudinary_all()
-        dwg_nos  = {row["drawing_no"].lower() for row in master_data if row.get("drawing_no")}
-        uploaded = {k.lower(): v for k, v in all_cld.items() if k.lower() in dwg_nos}
-
-        updates = []
-        for row in master_data:
-            dwg = row.get("drawing_no")
-            if not dwg:
-                continue
-            url = uploaded.get(dwg.lower())
-            if url:
-                link = url if url.lower().endswith(".pdf") else url + ".pdf"
-                updates.append({"id": row["id"], "drawing_no": dwg, "file_link": link})
-
-        supabase.table(TABLE_MARKED_PID).update({"file_link": None}).neq("id", 0).execute()
-        for i in range(0, len(updates), 500):
-            supabase.table(TABLE_MARKED_PID).upsert(updates[i:i+500], on_conflict="id").execute()
-
-        _invalidate_response_cache()
-        return jsonify({"success": True, "synced": len(updates),
-                        "message": f"{len(updates)}개 Marked PID 링크 연결 완료"})
-    except Exception as e:
-        import traceback; traceback.print_exc()
-        return jsonify({"error": str(e)}), 500
+if SUPABASE_URL and SUPABASE_KEY:
+    threading.Thread(target=_warm_up, daemon=True).start()
 
 
 if __name__ == "__main__":
