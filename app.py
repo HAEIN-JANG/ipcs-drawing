@@ -5,6 +5,7 @@ import io
 import hmac
 import threading
 import time as _time
+import traceback
 from collections import Counter, defaultdict
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, date, timezone
@@ -61,7 +62,6 @@ WRITE_PASSWORD = os.environ.get("WRITE_PASSWORD", "")
 
 SYSTEMS = ["AS", "ATM", "CCW", "CD", "DW", "FG", "FGH", "FO", "FW", "GT MISC",
            "HP", "HW", "IA", "LO", "LP", "N2", "PW", "RW", "SA", "SS", "ST MISC", "SW", "WWT"]
-REVISIONS = ["C01", "C01A", "C01B", "C01C", "C03", "VOID"]
 SUPPORT_TYPES = ["TYPICAL", "SPECIAL", "G", "GS", "U", "US", "W", "WS"]
 SUPPORT_TYPE_PREFIXES = ("G", "GS", "U", "US", "W", "WS")
 
@@ -510,7 +510,8 @@ def api_stats(cat):
 
 
 def _iso_filters(system=""):
-    return {"systems": SYSTEMS, "statuses": REVISIONS,
+    # Revision 목록은 DB 실제 값에서 뽑는다(새 Revision이 생겨도 필터에 바로 나타나도록).
+    return {"systems": SYSTEMS, "statuses": _safe_distinct("dwg_iso", "revision"),
             "remarks": _safe_distinct("dwg_iso", "remark"),
             "sizes": _safe_distinct("dwg_iso", "size", system or None)}
 
@@ -925,7 +926,7 @@ def api_sync_links(cat):
     try:
         return jsonify(_sync_links(cat, dry_run=request.args.get("dry_run") == "1"))
     except Exception as e:
-        import traceback; traceback.print_exc()
+        traceback.print_exc()
         return jsonify({"error": str(e)}), 500
 
 
@@ -934,6 +935,7 @@ def _warm_up():
     try:
         _iso_filters()
         _cat_stats("iso")
+        _cat_stats("support")   # 21,204행이라 첫 계산에 약 3초
         for col in ("revision", "remark", "size"):
             _get_distinct("support_master", col)
     except Exception as e:

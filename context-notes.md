@@ -54,3 +54,13 @@ ALTER TABLE drawing.marked_pid_master  ADD COLUMN IF NOT EXISTS updated_at times
 - 균등 배분(2026-09-28, 사용자 지적 "한쪽으로 치우침"): 짧은 칸만 px로 고정하자, 폭이 정해지지 않은 제목 칸 하나가 남는 폭을 전부 가져갔다(Valve에서 TITLE이 화면 절반, REV·DATE는 오른쪽 끝에 몰림). 모든 칸에 비율(%)을 주었다. 예) Valve·PID = NO 6 / ITEM·SYSTEM 16 / DWG 24 / TITLE 30 / REV 12 / DATE 12. 한 줄 유지 칸은 좁은 화면에서 비율보다 넓어질 수 있어, 1920/1366/1024px 모두 가로 넘침 0을 유지한다.
 - Data Health 삭제(2026-09-28, 사용자 지시 "quality section은 삭제"): 사이드바 QUALITY 메뉴, 화면 코드, `/api/health`·`/api/health/export`를 모두 제거했다. 위 Data Health 실측 수치(Support→없는 ISO 34건 등)는 기록으로만 남긴다.
 - Issue Register(발행 대장) 삭제(2026-09-28, 사용자 지시 "iso drawing에 issue register도 삭제"): ISO·Support가 같은 버튼·서버 코드를 썼으므로 기능 전체(툴바 버튼, 기간 모달, `/api/<cat>/issue-register`)를 제거했다.
+
+---
+
+# Context Notes — 최적화 6단계 (2026-09-28)
+
+- 1) 임시 코드: 추적 파일에 debug print·TODO 없음(남은 print는 의도한 로그). gitignore된 `.playwright-mcp` 시험 파일 32개 삭제.
+- 2) 코드 정리: 쓰지 않는 CSS 18규칙 제거(group-* 옛 그룹 헤더, pdf-btn, btn-danger/success, drop-zone-sub, hstat 색 3종). ISO STATUS 목록을 고정값 대신 DB 실제 값(`_safe_distinct("dwg_iso","revision")`)에서 추출 — 현재 값은 같음(C01/C01A/C01B/C01C/C03/VOID). `traceback` import를 상단으로 옮김.
+- 3) 기능: 6개 종류 × 목록/통계/Export/Print + 필터 6종 + init + 특수문자 검색 + 이력 + 옛 ISO 경로 + 업로드 dry-run + Sync dry-run 6종을 호출, 실패 0.
+- 4) 성능: 캐시 적중 0.00s, 캐시가 빈 첫 호출도 대부분 1초 이하(Support 통계 2.9s, Support Export 21,204행 5.3s). HTML·JSON gzip 확인. Sync는 Cloudinary 목록 조회가 대부분(ISO 39.8s, gunicorn timeout 120s 이내).
+- 5) 브라우저에서 찾은 버그: 서버 재시작 직후 Support 탭에 PDF 연결률이 ISO 값(100%)으로 남아 보였다. 탭을 바꿀 때 TOTAL만 비우고 PDF·Revision 칩은 비우지 않았고, Support 통계 첫 계산에 약 3초가 걸렸기 때문이다. 탭 전환 시 모두 비우고, 서버 시작 시 Support 통계도 미리 계산하도록 했다. 수정 후 즉시 `—` → 5.2%, 콘솔 경고 0.
