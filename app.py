@@ -128,6 +128,7 @@ def _cat(cat):
 # ── Supabase ─────────────────────────────────────────────────
 
 _supabase_client: Client = None
+_client_lock = threading.Lock()
 
 def _use_http1(client: Client):
     # 하나의 HTTP/2 연결을 여러 스레드가 공유하면 간헐적으로 ReadError(WinError 10035)가 나므로
@@ -146,9 +147,11 @@ def get_client() -> Client:
         return _supabase_client
     if not SUPABASE_URL or not SUPABASE_KEY:
         raise ValueError("SUPABASE_URL and SUPABASE_KEY are not set.")
-    client = create_client(SUPABASE_URL, SUPABASE_KEY, options=ClientOptions(schema="drawing"))
-    _use_http1(client)
-    _supabase_client = client
+    with _client_lock:   # 여러 스레드가 동시에 첫 클라이언트를 만들지 않도록
+        if _supabase_client is None:
+            client = create_client(SUPABASE_URL, SUPABASE_KEY, options=ClientOptions(schema="drawing"))
+            _use_http1(client)
+            _supabase_client = client
     return _supabase_client
 
 def _fetch_all_paginated(supabase, table, columns, page_size=PAGE, not_null=None, eq=None):
@@ -942,6 +945,12 @@ def _warm_up():
         print(f"[warm-up] skipped: {e}", flush=True)
 
 if SUPABASE_URL and SUPABASE_KEY:
+    # httpx 0.28은 첫 연결 때 httpcore를 import한다. 선계산 스레드와 첫 요청이 동시에 첫 연결을 만들면
+    # 반쯤 초기화된 httpcore가 남아 이후 모든 요청이 500이 됐다(2026-09-28 운영). 첫 조회를 메인 스레드에서 끝낸 뒤 스레드를 띄운다.
+    try:
+        get_client().table("pid_master").select("id").limit(1).execute()
+    except Exception as e:
+        print(f"[startup] first query failed: {e}", flush=True)
     threading.Thread(target=_warm_up, daemon=True).start()
 
 
