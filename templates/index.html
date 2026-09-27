@@ -1053,8 +1053,6 @@
     /* Revision 이력·발행 대장 모달 */
     .modal.modal-wide { width: 760px; }
     .modal-note { font-size: 12px; color: var(--text-muted); margin-bottom: 12px; }
-    .date-row { display: flex; gap: 12px; }
-    .date-row label { font-size: 12px; color: var(--text-muted); display: flex; align-items: center; gap: 6px; }
     .history-table { width: 100%; border-collapse: collapse; font-size: 12px; }
     .history-table th, .history-table td { border-bottom: 1px solid var(--border); padding: 7px 8px; text-align: left; }
     .history-table th { font-size: 10px; color: var(--text-muted); letter-spacing: .5px; }
@@ -1269,13 +1267,6 @@
         </svg>
         <span class="btn-label">Print</span>
       </button>
-      <button class="btn btn-ghost" id="btn-register" onclick="openRegisterModal()" title="Issue Register">
-        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <rect x="3" y="4" width="18" height="18" rx="2" />
-          <path d="M16 2v4M8 2v4M3 10h18" />
-        </svg>
-        <span class="btn-label">Issue Register</span>
-      </button>
     </div>
   </div>
 
@@ -1397,26 +1388,6 @@
     </div>
   </div>
 
-  <!-- ── Issue Register Modal ──────────────────────── -->
-  <div class="modal-backdrop" id="register-modal" onclick="if (event.target === this) closeModal('register-modal')">
-    <div class="modal">
-      <div class="modal-header">
-        <div class="modal-title">Issue Register — Excel</div>
-        <button class="modal-close" onclick="closeModal('register-modal')">×</button>
-      </div>
-      <div class="modal-body">
-        <p class="modal-note">Drawings issued in the period, split into New / Revised / VOID with the previous revision.</p>
-        <div class="date-row">
-          <label>From <input type="date" id="reg-from" class="filter-select"></label>
-          <label>To <input type="date" id="reg-to" class="filter-select"></label>
-        </div>
-      </div>
-      <div class="modal-footer">
-        <button class="btn-cancel" onclick="closeModal('register-modal')">Cancel</button>
-        <button class="btn btn-primary" onclick="downloadRegister()">Download</button>
-      </div>
-    </div>
-  </div>
 
   <!-- ── Loading overlay ─────────────────────────── -->
   <div class="loading-overlay" id="loading">
@@ -1440,8 +1411,8 @@
 
     // 탭별 제목·보이는 필터·필터 목록 API — status 필터는 ISO에선 STATUS, 나머지에선 Revision
     const CAT_META = {
-      iso:        { title: 'ISO DRAWING MASTER LIST',        label: 'ISO',        filters: ['system', 'size', 'status', 'remark'],        filtersUrl: '/api/filters',            register: true },
-      support:    { title: 'SUPPORT DRAWING MASTER LIST',    label: 'Support',    filters: ['system', 'size', 'status', 'type', 'remark'], filtersUrl: '/api/support/filters',    register: true },
+      iso:        { title: 'ISO DRAWING MASTER LIST',        label: 'ISO',        filters: ['system', 'size', 'status', 'remark'],        filtersUrl: '/api/filters' },
+      support:    { title: 'SUPPORT DRAWING MASTER LIST',    label: 'Support',    filters: ['system', 'size', 'status', 'type', 'remark'], filtersUrl: '/api/support/filters' },
       valve:      { title: 'VALVE DRAWING MASTER LIST',      label: 'Valve',      filters: ['status', 'type'],                            filtersUrl: '/api/valve/filters' },
       speciality: { title: 'SPECIALITY DRAWING MASTER LIST', label: 'Speciality', filters: ['status', 'title'],                           filtersUrl: '/api/speciality/filters' },
       pid:        { title: 'P&ID DRAWING MASTER LIST',       label: 'P&ID',       filters: ['system', 'status'],                          filtersUrl: '/api/pid/filters' },
@@ -1528,7 +1499,6 @@
       Object.entries(FILTER_IDS).forEach(([k, id]) => {
         document.getElementById(id).style.display = meta.filters.includes(k) ? '' : 'none';
       });
-      document.getElementById('btn-register').style.display = meta.register ? '' : 'none';
     }
 
     function switchCategory(cat) {
@@ -1992,25 +1962,6 @@
       const btn = e.target.closest('.rev-hist');
       if (btn) openHistory(btn.dataset.no);
     });
-
-    /* ─── Issue Register ─────────────────────────────── */
-    function openRegisterModal() {
-      const today = new Date();
-      const iso = d => new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
-      const from = document.getElementById('reg-from');
-      const to = document.getElementById('reg-to');
-      if (!from.value) from.value = iso(new Date(today.getFullYear(), today.getMonth(), 1));
-      if (!to.value) to.value = iso(today);
-      document.getElementById('register-modal').classList.add('show');
-    }
-    function downloadRegister() {
-      const params = new URLSearchParams({
-        from: document.getElementById('reg-from').value,
-        to: document.getElementById('reg-to').value
-      });
-      window.location.href = `/api/${state.category}/issue-register?${params}`;
-      closeModal('register-modal');
-    }
 
     /* ─── Sync Links ─────────────────────────────────── */
     async function runSyncLinks() {

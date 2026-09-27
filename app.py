@@ -675,51 +675,6 @@ th {{ background-color: #f1f5f9; font-weight: 600; text-transform: uppercase; }}
         return f"Print failed: {_esc(e)}", 500
 
 
-# ── 발행 대장 ─────────────────────────────────────────────────
-
-@app.route("/api/<cat>/issue-register")
-def api_issue_register(cat):
-    # 기간 안에 발행된 도면을 신규(첫 Revision) / 개정(이전 Revision 있음) / VOID로 나눠 Excel로 내보낸다.
-    cat = _cat(cat)
-    cfg = CATS[cat]
-    if not cfg["view"]:
-        abort(404)
-    d_from = request.args.get("from", "").strip() or "0000-01-01"
-    d_to   = request.args.get("to", "").strip() or "9999-12-31"
-    try:
-        no_col = cfg["key"][0]
-        extra = "line_no,title,file_link" if cat == "iso" else "type,iso_drawing,line_no,file_link"
-        rows = _fetch_all_paginated(get_client(), cfg["table"], f"id,system,{no_col},revision,issued_date,{extra}")
-        revs = defaultdict(list)
-        for r in rows:
-            revs[r[no_col]].append(r["revision"] or "")
-        out = []
-        for r in rows:
-            issued = (r.get("issued_date") or "")[:10]
-            if not (d_from <= issued <= d_to):
-                continue
-            prev = [v for v in sorted(revs[r[no_col]]) if v < (r["revision"] or "")]
-            kind = "VOID" if r["revision"] == "VOID" else ("Revised" if prev else "New")
-            out.append((issued, r.get("system"), r[no_col], r["revision"], prev[-1] if prev else "", kind, r))
-        out.sort(key=lambda x: (x[0], x[1] or "", x[2]))
-        if cat == "iso":
-            headers = ["ISSUE DATE", "SYSTEM", "DWG. NO.", "REV.", "PREV. REV.", "KIND", "LINE NO.", "TITLE", "PDF LINK"]
-            data = [list(o[:6]) + [o[6].get("line_no"), o[6].get("title"), get_cloudinary_url(o[6].get("file_link"))] for o in out]
-        else:
-            headers = ["ISSUE DATE", "SYSTEM", "SUPPORT DRAWING", "REV.", "PREV. REV.", "KIND", "TYPE", "ISO DRAWING", "LINE NO.", "PDF LINK"]
-            data = [list(o[:6]) + [o[6].get("type"), o[6].get("iso_drawing"), o[6].get("line_no"), o[6].get("file_link")] for o in out]
-        summary = Counter((o[1] or "—", o[5]) for o in out)
-        systems = sorted({s for s, _ in summary})
-        kinds = ["New", "Revised", "VOID"]
-        sum_rows = [[s] + [summary.get((s, k), 0) for k in kinds] + [sum(summary.get((s, k), 0) for k in kinds)] for s in systems]
-        sum_rows.append(["TOTAL"] + [sum(r[i] for r in sum_rows) for i in range(1, 5)])
-        return _xlsx([("Issue Register", headers, data),
-                      ("Summary", ["SYSTEM"] + kinds + ["TOTAL"], sum_rows)],
-                     f"{cfg['label'].replace(' ', '_')}_Issue_Register_{d_from}_{d_to}.xlsx".replace("0000-01-01", "start").replace("9999-12-31", "end"))
-    except Exception as e:
-        return jsonify({"error": f"Export failed: {e}"}), 500
-
-
 # ── Excel 업로드 ──────────────────────────────────────────────
 
 def _read_excel(file, header_row=0, lower=False):

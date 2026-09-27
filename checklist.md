@@ -28,7 +28,7 @@ Plan: 2026-09-27 전체 점검 보고서(ipcs-control·ipcs-material 형식)의 
 - [x] ① Revision 이력 보기 (ISO·Support)
 - [x] ② Data Health 화면 (카드 + Excel) → 2026-09-28 사용자 요청으로 삭제
 - [x] ③ 업로드 미리보기 (dry-run: 신규·개정·변경·변경없음)
-- [x] ④ 발행 대장 Excel (기간별 신규·개정)
+- [x] ④ 발행 대장 Excel (기간별 신규·개정) → 2026-09-28 사용자 요청으로 삭제
 - [ ] ⑤ ipcs-control 연계 — 사용자 확인 필요 (새 DB 접근)
 - [ ] ⑥ ipcs-material 연계 — 사용자 확인 필요 (새 DB 접근)
 - [x] ⑦ 수정 이력(updated_at/updated_by) — 칸이 있을 때만 기록, SQL 전달 (SQL 실행은 사용자)
