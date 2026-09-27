@@ -36,3 +36,18 @@ ALTER TABLE drawing.marked_pid_master  ADD COLUMN IF NOT EXISTS updated_at times
 - 업로드 dry-run: ISO(변경 1·개정 1·신규 1·변경없음 49로 정확히 분류), Support 50·PID 24·Marked PID 23건은 전부 변경없음. Sync dry-run 6종 모두 200. 쓰기 보호(비밀번호 없음/틀림 401, 맞음 200, GET 영향 없음).
 - 브라우저(로컬 5100): 6개 탭 + Data Health 전환, Revision 이력 창, 업로드 미리보기(Confirm은 누르지 않음), 발행 대장 모달. 콘솔 오류·경고 0(favicon 404는 `data:` 아이콘으로 제거).
 - 운영 DB에 실제로 쓴 것: 6개 테이블 각 1행에 기존과 같은 값으로 upsert(무변경 확인). 그 밖의 쓰기는 없다.
+
+---
+
+# Context Notes — 해상도 대응 (2026-09-27, ipcs-control 101ac7a와 같은 방식)
+
+- 원인: 칸마다 큰 min-width(ISO 합계 약 1,520px, PID DWG 420px 등)를 둬서 1366px 화면에서 제목·REV·날짜가 가로 스크롤 밖으로 밀렸다.
+- 실측(가로 스크롤 px, 수정 전 → 후): 1366px ISO 458→0, Support 274→0, Valve 116→0, PID 125→0. 1024px에서는 전 탭이 넘쳤으나(ISO 801, Support 617 등) 모두 0이 됐다. 1920px에서는 ISO 행 높이가 54→40으로 줄었다(제목이 한 줄에 들어감).
+- 칸 폭: 번호·날짜·REV처럼 짧은 칸은 좁게 고정하고, 도면·라인 번호는 한 줄로 유지한다. 제목·비고·설명은 남는 폭에서 줄을 바꾸고, 머리글은 단어 단위로 줄바꿈한다(`word-break: keep-all`).
+- 단계별 조정
+  - 1600px 이하: 여백·셀 패딩 축소.
+  - 1440px 이하: 사이드바를 200px로 줄이고, 보조 버튼(Export/Print/Issue Register)은 아이콘만 남긴다(`title` 속성으로 이름 표시).
+  - 1280px 이하: 부제를 숨기고, Support LINE NO를 하이픈에서 줄바꿈한다.
+  - 1100px 이하: 사이드바를 아이콘만 남긴 60px로 줄이고 Revision 칩을 숨긴다. Support ISO 번호도 줄바꿈한다.
+- 헤더: Support의 Revision 칩 9개가 여러 줄이 되면 고정 높이(56px) 밖으로 넘쳐 TOTAL 숫자가 잘렸다. 헤더 높이를 `min-height`로 바꿔 내용에 맞춰 늘어나게 했다.
+- 남은 것: 1024~1280px에서 Support 공통 도면(System ALL) 8행은 ISO DRAWING 칸의 긴 설명 때문에 행이 여러 줄로 높아진다(가로 넘침은 없음).
