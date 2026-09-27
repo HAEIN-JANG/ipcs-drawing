@@ -1064,20 +1064,6 @@
     .preview-list .kind { display: inline-block; min-width: 58px; font-weight: 600; }
     .preview-list .diff { color: var(--text-muted); margin-left: 58px; }
 
-    /* Data Health */
-    .health-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; }
-    .health-head p { font-size: 12px; color: var(--text-muted); }
-    .health-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 12px; }
-    .health-card { background: var(--surface); border: 1px solid var(--border); border-left: 4px solid var(--green);
-                   border-radius: var(--radius); padding: 14px; display: flex; flex-direction: column; gap: 6px; }
-    .health-card.warn { border-left-color: #d97706; }
-    .health-count { font-family: var(--font-mono); font-size: 22px; font-weight: 600; }
-    .health-card.warn .health-count { color: #b45309; }
-    .health-card.ok .health-count { color: var(--green); }
-    .health-title { font-size: 13px; font-weight: 600; }
-    .health-desc { font-size: 11px; color: var(--text-muted); flex: 1; }
-    .health-card .btn { align-self: flex-start; }
-
     /* ── 해상도 대응 (2026-09-27, ipcs-control과 같은 방식) ──
        1600px 이하: 여백·셀 패딩 축소 / 1440px 이하: 사이드바 축소, 보조 버튼은 아이콘만(title로 이름 표시)
        1280px 이하: 부제·헤더 숫자 축소 / 1100px 이하: 사이드바 아이콘만, Revision 칩 숨김 */
@@ -1179,13 +1165,6 @@
           Marked PID
         </div>
 
-        <div class="nav-label">QUALITY</div>
-        <div class="nav-item" data-cat="health" title="Data Health" onclick="switchCategory('health')">
-          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="M22 12h-4l-3 9L9 3l-3 9H2" />
-          </svg>
-          Data Health
-        </div>
       </div>
     </aside>
 
@@ -1220,7 +1199,7 @@
       </header>
 
   <!-- ── Toolbar ─────────────────────────────────── -->
-  <div class="toolbar" id="toolbar">
+  <div class="toolbar">
     <div class="search-wrap">
       <svg class="search-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
         stroke-width="2">
@@ -1301,7 +1280,7 @@
   </div>
 
   <!-- ── Results bar ──────────────────────────────── -->
-  <div class="results-bar" id="results-bar">
+  <div class="results-bar">
     <div class="results-text">
       Results: <strong id="result-count">—</strong> drawings
       <span class="results-meta">· Latest status · sorted by DWG. NO.</span>
@@ -1466,8 +1445,7 @@
       valve:      { title: 'VALVE DRAWING MASTER LIST',      label: 'Valve',      filters: ['status', 'type'],                            filtersUrl: '/api/valve/filters' },
       speciality: { title: 'SPECIALITY DRAWING MASTER LIST', label: 'Speciality', filters: ['status', 'title'],                           filtersUrl: '/api/speciality/filters' },
       pid:        { title: 'P&ID DRAWING MASTER LIST',       label: 'P&ID',       filters: ['system', 'status'],                          filtersUrl: '/api/pid/filters' },
-      markedpid:  { title: 'MARKED PID MASTER LIST',         label: 'Marked PID', filters: ['system'],                                    filtersUrl: '/api/markedpid/filters' },
-      health:     { title: 'DATA HEALTH',                    label: 'Data Health', filters: [] }
+      markedpid:  { title: 'MARKED PID MASTER LIST',         label: 'Marked PID', filters: ['system'],                                    filtersUrl: '/api/markedpid/filters' }
     };
     const FILTER_IDS = { system: 'filter-system', size: 'filter-size', status: 'filter-status', type: 'filter-type', title: 'filter-title', remark: 'filter-remark' };
 
@@ -1550,11 +1528,6 @@
       Object.entries(FILTER_IDS).forEach(([k, id]) => {
         document.getElementById(id).style.display = meta.filters.includes(k) ? '' : 'none';
       });
-      const isHealth = cat === 'health';
-      ['toolbar', 'results-bar', 'pagination', 'btn-sync'].forEach(id => {
-        document.getElementById(id).style.display = isHealth ? 'none' : '';
-      });
-      document.querySelector('.header-stats').style.visibility = isHealth ? 'hidden' : '';
       document.getElementById('btn-register').style.display = meta.register ? '' : 'none';
     }
 
@@ -1568,7 +1541,6 @@
       document.getElementById('empty-state').style.display = 'none';
       setTabChrome(cat);
 
-      if (cat === 'health') { loadHealth(); return; }
       document.getElementById('stat-total').textContent = '—';
       loadStats(cat);
       loadCatFilters(cat);
@@ -2038,39 +2010,6 @@
       });
       window.location.href = `/api/${state.category}/issue-register?${params}`;
       closeModal('register-modal');
-    }
-
-    /* ─── Data Health ─────────────────────────────────── */
-    async function loadHealth() {
-      showLoading(true);
-      try {
-        const res = await fetch('/api/health');
-        const d = await res.json();
-        if (d.error) throw new Error(d.error);
-        if (state.category !== 'health') return;
-        const cards = d.map(c => `
-          <div class="health-card ${c.count ? 'warn' : 'ok'}">
-            <div class="health-count">${c.count.toLocaleString()}</div>
-            <div class="health-title">${esc(c.title)}</div>
-            <div class="health-desc">${esc(c.desc)}</div>
-            ${c.count ? `<button class="btn btn-ghost" onclick="exportHealth('${esc(c.id)}')">Export Excel</button>` : ''}
-          </div>`).join('');
-        document.getElementById('table-anchor').innerHTML = `
-          <div class="health-head">
-            <p>Cross-checks across ISO, Support, P&amp;ID, Valve, Speciality and Marked PID (latest revisions).</p>
-            <button class="btn btn-ghost" onclick="exportHealth('all')">Export All</button>
-          </div>
-          <div class="health-grid">${cards}</div>`;
-      } catch (e) {
-        console.error('Health load error:', e);
-        toast('Failed to load Data Health');
-      } finally {
-        showLoading(false);
-      }
-    }
-    function exportHealth(id) {
-      toast('Exporting Excel...');
-      window.location.href = `/api/health/export?check=${encodeURIComponent(id)}`;
     }
 
     /* ─── Sync Links ─────────────────────────────────── */

@@ -207,7 +207,7 @@ RESP_CACHE_TTL = 1800  # 30분 — 무효화를 놓쳤을 때를 대비한 안�
 RESP_CACHE_MAX = 500   # 검색어마다 키가 생겨 무한히 늘지 않도록 상한을 두고, 넘으면 비운다
 
 _distinct_cache: dict = {}   # (table, col, system) → (ts, values)
-_calc_cache: dict = {}       # 통계·Data Health 계산 결과 → (ts, value)
+_calc_cache: dict = {}       # 통계 계산 결과 → (ts, value)
 DISTINCT_CACHE_TTL = 1800
 CALC_CACHE_TTL = 300
 
@@ -716,88 +716,6 @@ def api_issue_register(cat):
         return _xlsx([("Issue Register", headers, data),
                       ("Summary", ["SYSTEM"] + kinds + ["TOTAL"], sum_rows)],
                      f"{cfg['label'].replace(' ', '_')}_Issue_Register_{d_from}_{d_to}.xlsx".replace("0000-01-01", "start").replace("9999-12-31", "end"))
-    except Exception as e:
-        return jsonify({"error": f"Export failed: {e}"}), 500
-
-
-# ── Data Health ───────────────────────────────────────────────
-
-SUPPORT_TYPE_RE = re.compile(r"\((G|GS|U|US|W|WS)-\d+[A-Z]?\)")
-
-def _health():
-    def calc():
-        sb = get_client()
-        with ThreadPoolExecutor(max_workers=4) as ex:
-            f_lat = ex.submit(_fetch_all_paginated, sb, "dwg_latest", "id,system,drawing_no,line_no,revision,issued_date,file_link,remark")
-            f_all = ex.submit(_fetch_all_paginated, sb, "dwg_iso", "id,drawing_no,revision,issued_date")
-            f_sup = ex.submit(_fetch_all_paginated, sb, "support_latest", "id,system,support_drawing,type,iso_drawing,line_no,revision,file_link")
-            f_oth = {c: ex.submit(_fetch_all_paginated, sb, CATS[c]["table"], "id,drawing_no,file_link")
-                     for c in ("pid", "valve", "speciality", "markedpid")}
-            latest, all_iso, sup = f_lat.result(), f_all.result(), f_sup.result()
-            others = {c: f.result() for c, f in f_oth.items()}
-
-        iso_by_no = {r["drawing_no"]: r for r in latest}
-        iso_cols = ["SYSTEM", "DWG. NO.", "LINE NO.", "REV.", "ISSUE DATE", "REMARK"]
-        iso_row = lambda r: [r.get("system"), r.get("drawing_no"), r.get("line_no"), r.get("revision"), r.get("issued_date"), r.get("remark")]
-        sup_cols = ["SYSTEM", "SUPPORT DRAWING", "TYPE", "ISO DRAWING", "LINE NO.", "REV."]
-        sup_row = lambda r: [r.get("system"), r.get("support_drawing"), r.get("type"), r.get("iso_drawing"), r.get("line_no"), r.get("revision")]
-
-        # 같은 도면에서 뒤 Revision의 발행일이 앞 Revision보다 빠른 경우
-        by_no = defaultdict(list)
-        for r in all_iso:
-            by_no[r["drawing_no"]].append(r)
-        date_order = []
-        for no, rs in by_no.items():
-            rs = sorted((r for r in rs if r["revision"] != "VOID"), key=lambda r: r["revision"] or "")
-            for a, b in zip(rs, rs[1:]):
-                if a.get("issued_date") and b.get("issued_date") and b["issued_date"] < a["issued_date"]:
-                    date_order.append([no, a["revision"], a["issued_date"], b["revision"], b["issued_date"]])
-
-        checks = [
-            ("iso_no_pdf", "ISO without PDF", "Latest ISO revision (not VOID) has no PDF link.",
-             iso_cols, [iso_row(r) for r in latest if r["revision"] != "VOID" and not r.get("file_link")]),
-            ("iso_void_pdf", "VOID ISO with PDF", "Latest revision is VOID but a PDF link is still set.",
-             iso_cols, [iso_row(r) for r in latest if r["revision"] == "VOID" and r.get("file_link")]),
-            ("iso_rev_date", "Revision date order", "A later revision was issued before the previous revision.",
-             ["DWG. NO.", "REV.", "ISSUE DATE", "NEXT REV.", "NEXT ISSUE DATE"], date_order),
-            ("sup_iso_missing", "Support → unknown ISO", "Support refers to an ISO drawing that is not in the ISO list.",
-             sup_cols, [sup_row(r) for r in sup if r.get("iso_drawing") and r["iso_drawing"] not in iso_by_no]),
-            ("sup_iso_void", "Support on VOID ISO", "Support refers to an ISO drawing whose latest revision is VOID.",
-             sup_cols, [sup_row(r) for r in sup if iso_by_no.get(r.get("iso_drawing"), {}).get("revision") == "VOID"]),
-            ("sup_type", "Support type format", "Support type is not (G|GS|U|US|W|WS-n), SPECIAL or TYPICAL.",
-             sup_cols, [sup_row(r) for r in sup if not (SUPPORT_TYPE_RE.fullmatch(r.get("type") or "") or r.get("type") in ("SPECIAL", "TYPICAL"))]),
-            ("unknown_system", "Unknown system", "System code is not in the project system list.",
-             ["CATEGORY", "DRAWING NO.", "SYSTEM"],
-             [["ISO", r["drawing_no"], r.get("system")] for r in latest if r.get("system") not in SYSTEMS] +
-             [["Support", r["support_drawing"], r.get("system")] for r in sup
-              if r.get("system") not in SYSTEMS and r.get("system") != "ALL"]),   # ALL = 공통 Support 도면(P02)
-            ("other_no_pdf", "P&ID / Valve / Speciality / Marked PID without PDF", "Drawing has no PDF link.",
-             ["CATEGORY", "DRAWING NO."],
-             [[CATS[c]["label"], r["drawing_no"]] for c, rs in others.items() for r in rs if not r.get("file_link")]),
-            ("sup_no_pdf", "Support without PDF", "Latest support revision has no PDF link.",
-             sup_cols, [sup_row(r) for r in sup if r["revision"] != "VOID" and not r.get("file_link")]),
-        ]
-        return [dict(id=i, title=t, desc=d, headers=h, rows=rows) for i, t, d, h, rows in checks]
-    return _memo(("health",), calc)
-
-
-@app.route("/api/health")
-def api_health():
-    try:
-        return jsonify([{k: c[k] for k in ("id", "title", "desc")} | {"count": len(c["rows"])} for c in _health()])
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-
-@app.route("/api/health/export")
-def api_health_export():
-    check = request.args.get("check", "")
-    try:
-        checks = [c for c in _health() if check in ("all", c["id"])]
-        if not checks:
-            return jsonify({"error": "Unknown check"}), 404
-        return _xlsx([(c["title"].replace("/", "-").replace("→", "to"), c["headers"], c["rows"]) for c in checks],
-                     f"Drawing_Data_Health_{check}_{_stamp()}.xlsx")
     except Exception as e:
         return jsonify({"error": f"Export failed: {e}"}), 500
 
