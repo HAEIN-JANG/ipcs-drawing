@@ -11,11 +11,16 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, date, timezone
 from functools import wraps
 
+import importlib
 import httpx
 import openpyxl
 import xlsxwriter
 from flask import Flask, render_template, request, jsonify, send_file, make_response, abort
 from supabase import create_client, Client, ClientOptions
+
+# httpx 0.28은 첫 연결 때 httpcore를 import한다. 요청 스레드 여럿이 동시에 첫 연결을 만들면
+# 반쯤 초기화된 httpcore를 보고 모든 요청이 500이 될 수 있어(2026-09-28 운영) 로드 시점에 미리 import한다.
+importlib.import_module("httpcore")
 
 
 def _load_env():
@@ -933,26 +938,8 @@ def api_sync_links(cat):
         return jsonify({"error": str(e)}), 500
 
 
-def _warm_up():
-    # 첫 접속이 필터 목록 계산(전체 행 읽기)을 기다리지 않도록 시작 시 미리 채운다.
-    try:
-        _iso_filters()
-        _cat_stats("iso")
-        _cat_stats("support")   # 21,204행이라 첫 계산에 약 3초
-        for col in ("revision", "remark", "size"):
-            _get_distinct("support_master", col)
-    except Exception as e:
-        print(f"[warm-up] skipped: {e}", flush=True)
-
-if SUPABASE_URL and SUPABASE_KEY:
-    # httpx 0.28은 첫 연결 때 httpcore를 import한다. 선계산 스레드와 첫 요청이 동시에 첫 연결을 만들면
-    # 반쯤 초기화된 httpcore가 남아 이후 모든 요청이 500이 됐다(2026-09-28 운영). 첫 조회를 메인 스레드에서 끝낸 뒤 스레드를 띄운다.
-    try:
-        get_client().table("pid_master").select("id").limit(1).execute()
-    except Exception as e:
-        print(f"[startup] first query failed: {e}", flush=True)
-    threading.Thread(target=_warm_up, daemon=True).start()
-
+# 모듈 로드 중에는 스레드를 띄우거나 DB를 조회하지 않는다. 시작 시 선계산 스레드를 두었다가
+# httpcore 동시 import(500)와 gunicorn 기동 멈춤이 운영에서 났다(2026-09-28). 캐시는 첫 요청 때 채운다.
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5100))
