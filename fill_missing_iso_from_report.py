@@ -5,6 +5,8 @@ import sys
 
 import pandas as pd
 
+from cache_notify import clear_app_cache
+
 
 def load_env():
     root = os.path.dirname(os.path.abspath(__file__))
@@ -111,6 +113,7 @@ def main():
     for id_, tag, old_type, payload in updates:
         supabase.table("support_master").update(payload).eq("id", id_).execute()
     print(f"완료: {len(updates)}건 업데이트")
+    clear_app_cache()
 
 
 if __name__ == "__main__":

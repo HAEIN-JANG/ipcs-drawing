@@ -1,6 +1,7 @@
 # Support Master DB 업데이트 스크립트 (엑셀 → Supabase)
 import openpyxl
 import re
+from cache_notify import clear_app_cache
 import os
 import sys
 
@@ -294,6 +295,7 @@ def main():
         print(f"  {done:,}/{len(delete_ids):,}")
 
     print(f"\n완료. upsert {len(upsert_batch):,}건, insert {len(insert_batch):,}건, delete {len(delete_ids):,}건.")
+    clear_app_cache()
 
 
 if __name__ == '__main__':

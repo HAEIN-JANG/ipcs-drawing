@@ -8,6 +8,8 @@ import openpyxl
 from datetime import datetime
 from pathlib import Path
 
+from cache_notify import clear_app_cache
+
 # ── 의존성 체크 ──────────────────────────────────────
 try:
     from supabase import create_client, ClientOptions
@@ -107,6 +109,7 @@ def main():
     print(f"\n\n{'='*55}")
     print(f"  ✅ 업로드 완료!  valve_master 총 레코드: {res2.count}건")
     print(f"{'='*55}\n")
+    clear_app_cache()
 
 
 if __name__ == "__main__":
