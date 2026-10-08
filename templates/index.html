@@ -1048,13 +1048,13 @@
           </svg>
           Marked PID
         </div>
-        <div class="nav-item" data-cat="testpackage" title="Test Package" onclick="switchCategory('testpackage')">
+        <div class="nav-item" data-cat="testpackage" title="Test Package PID" onclick="switchCategory('testpackage')">
           <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <rect x="8" y="2" width="8" height="4" rx="1" />
             <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2" />
             <path d="m9 14 2 2 4-4" />
           </svg>
-          Test Package
+          Test Package PID
         </div>
 
       </div>
@@ -1311,7 +1311,7 @@
       speciality: { title: 'SPECIALITY DRAWING MASTER LIST', label: 'Speciality', filters: ['status', 'title'],                           filtersUrl: '/api/speciality/filters' },
       pid:        { title: 'P&ID DRAWING MASTER LIST',       label: 'P&ID',       filters: ['system', 'status'],                          filtersUrl: '/api/pid/filters' },
       markedpid:  { title: 'MARKED PID MASTER LIST',         label: 'Marked PID', filters: ['system'],                                    filtersUrl: '/api/markedpid/filters' },
-      testpackage: { title: 'TEST PACKAGE MASTER LIST',      label: 'Test Package', filters: ['system'],                                  filtersUrl: '/api/testpackage/filters' }
+      testpackage: { title: 'TEST PACKAGE PID MASTER LIST',  label: 'Test Package PID', filters: ['system'],                                  filtersUrl: '/api/testpackage/filters' }
     };
     const FILTER_IDS = { system: 'filter-system', size: 'filter-size', status: 'filter-status', type: 'filter-type', title: 'filter-title', remark: 'filter-remark' };
 
@@ -1774,7 +1774,7 @@
     const RENDERERS = {
       iso: renderTable, support: renderSupportTable, valve: renderValveTable,
       speciality: renderSpecialityTable, pid: renderPidTable, markedpid: renderMarkedPidTable,
-      testpackage: () => renderMarkedPidTable('TEST PACKAGE')
+      testpackage: () => renderMarkedPidTable('TEST PACKAGE PID')
     };
 
     /* ─── Pagination ─────────────────────────────────── */
@@ -1896,7 +1896,7 @@
       speciality: 'No / Drawing No / Title / Vendor / Class / Connection / Rev. / Date  (header on row 2)',
       pid:        'No / System / Drawing No / Title / Rev. / Date  (header on row 2)',
       markedpid:  'NO. / SYSTEM / MARKED PID / DESCRIPTION / DATE',
-      testpackage: 'NO. / SYSTEM / TEST PACKAGE / DESCRIPTION / DATE',
+      testpackage: 'NO. / SYSTEM / TEST PACKAGE PID / DESCRIPTION / DATE',
     };
     const UPLOAD_ICON = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
       <polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>`;

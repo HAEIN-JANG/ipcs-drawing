@@ -72,3 +72,4 @@ ALTER TABLE drawing.marked_pid_master  ADD COLUMN IF NOT EXISTS updated_at times
 - 업로드 Excel 머리글은 `NO. / SYSTEM / TEST PACKAGE / DESCRIPTION / DATE`.
 - PDF 파일명이 도면번호가 아니라 계통명(`Potable_Water_System` 등)이다. Sync Links가 링크를 지우지 않도록 testpackage만 지금 링크의 파일명을 후보에 넣는다(`_link_candidates`).
 - 도면번호는 Marked PID처럼 `CCGT-TP-BOP-{SYS}-XXX`로 정했다. PDF 안 번호는 PW-001, RW-001~003(한 파일에 3개), CCW-001이다. 설명은 `{계통명} System Pressure Test Package`, 발행일은 등록일(2026-10-08).
+- 사용자 지시로 탭 이름을 Test Package PID로 바꾸고 번호의 XXX를 001로 바꿨다(PW-001·RW-001·CCW-001). 앞으로 업로드되는 번호도 끝이 `-XXX`면 `-001`로 바꿔 등록한다(`_parse_upload`). 업로드 머리글은 `TEST PACKAGE PID`. Marked PID와 번호가 겹치지 않게 되었지만, 파일명이 계통명이라 Sync Links는 지금 링크의 파일명을 계속 먼저 찾는다.

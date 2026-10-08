@@ -118,9 +118,9 @@ CATS = {
               ("title", "DESCRIPTION"), ("issued_date", "ISSUE DATE"), ("file_link", "PDF LINK")),
         print_cols=("system", "pid_drawing_no", "drawing_no", "title", "issued_date")),
     "testpackage": dict(
-        label="Test Package", table="test_package_master", view=None, key=("drawing_no",),
+        label="Test Package PID", table="test_package_master", view=None, key=("drawing_no",),
         search=("drawing_no", "title", "system"), eq=("system",), rev=False, size=False, order=("id",),
-        cols=(("system", "SYSTEM"), ("pid_drawing_no", "PID DRAWING NO."), ("drawing_no", "TEST PACKAGE"),
+        cols=(("system", "SYSTEM"), ("pid_drawing_no", "PID DRAWING NO."), ("drawing_no", "TEST PACKAGE PID"),
               ("title", "DESCRIPTION"), ("issued_date", "ISSUE DATE"), ("file_link", "PDF LINK")),
         print_cols=("system", "pid_drawing_no", "drawing_no", "title", "issued_date")),
 }
@@ -766,8 +766,12 @@ def _parse_upload(cat, file):
         return [_row(drawing_no=_pick(r, "Drawing No"), system=_pick(r, "System"), title=_pick(r, "Title"),
                      revision=_pick(r, "Rev."), issued_date=_date(r.get("Date")))
                 for r in _read_excel(file, 1)]
-    no_col = "TEST PACKAGE" if cat == "testpackage" else "MARKED PID"
-    return [_row(drawing_no=_pick(r, no_col), system=_pick(r, "SYSTEM"), title=_pick(r, "DESCRIPTION"),
+    if cat == "testpackage":
+        # Test Package PID 번호의 끝 XXX는 001로 등록한다(2026-10-08 사용자 지시).
+        return [_row(drawing_no=re.sub(r"-XXX$", "-001", _pick(r, "TEST PACKAGE PID"), flags=re.I),
+                     system=_pick(r, "SYSTEM"), title=_pick(r, "DESCRIPTION"), issued_date=_date(r.get("DATE")))
+                for r in _read_excel(file, 0)]
+    return [_row(drawing_no=_pick(r, "MARKED PID"), system=_pick(r, "SYSTEM"), title=_pick(r, "DESCRIPTION"),
                  issued_date=_date(r.get("DATE")))
             for r in _read_excel(file, 0)]
 
@@ -869,8 +873,7 @@ def _fetch_cloudinary_all(resource_type="image"):
 def _link_candidates(cat, row, is_latest):
     # 도면 행에 맞는 Cloudinary 파일명 후보(우선순위 순)
     if cat == "testpackage":
-        # PDF 파일명이 계통명(Potable_Water_System 등)이고 도면번호는 Marked PID PDF 이름과 같으므로
-        # 지금 링크의 파일명을 먼저 찾는다(도면번호를 먼저 찾으면 Marked PID PDF가 붙는다).
+        # PDF 파일명이 도면번호가 아니라 계통명(Potable_Water_System 등)이라 지금 링크의 파일명을 먼저 찾는다.
         link = str(row.get("file_link") or "")
         return ([link.rsplit("/", 1)[-1].rsplit(".", 1)[0]] if link else []) + [str(row["drawing_no"]).strip()]
     if cat not in ("iso", "support"):
