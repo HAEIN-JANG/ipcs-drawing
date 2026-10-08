@@ -869,9 +869,10 @@ def _fetch_cloudinary_all(resource_type="image"):
 def _link_candidates(cat, row, is_latest):
     # 도면 행에 맞는 Cloudinary 파일명 후보(우선순위 순)
     if cat == "testpackage":
-        # PDF 파일명이 도면번호가 아니라 계통명(Potable_Water_System 등)이라 지금 링크의 파일명도 후보로 둔다.
+        # PDF 파일명이 계통명(Potable_Water_System 등)이고 도면번호는 Marked PID PDF 이름과 같으므로
+        # 지금 링크의 파일명을 먼저 찾는다(도면번호를 먼저 찾으면 Marked PID PDF가 붙는다).
         link = str(row.get("file_link") or "")
-        return [str(row["drawing_no"]).strip()] + ([link.rsplit("/", 1)[-1].rsplit(".", 1)[0]] if link else [])
+        return ([link.rsplit("/", 1)[-1].rsplit(".", 1)[0]] if link else []) + [str(row["drawing_no"]).strip()]
     if cat not in ("iso", "support"):
         return [str(row["drawing_no"]).strip()]
     if cat == "iso":
