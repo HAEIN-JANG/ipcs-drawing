@@ -395,7 +395,7 @@ def _decorate(cat, rows):
 
 def _select_cols(cat):
     cols = [c for c, _ in CATS[cat]["cols"] if c not in COMPUTED_COLS]
-    for extra in ("id", "line_no" if CATS[cat]["size"] else None, "system" if cat in ("markedpid", "testpackage") else None):
+    for extra in ("id", "line_no" if CATS[cat]["size"] else None, "system" if cat == "markedpid" else None):
         if extra and extra not in cols:
             cols.append(extra)
     return ",".join(cols)
