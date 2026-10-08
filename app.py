@@ -117,6 +117,12 @@ CATS = {
         cols=(("system", "SYSTEM"), ("pid_drawing_no", "PID DRAWING NO."), ("drawing_no", "MARKED PID"),
               ("title", "DESCRIPTION"), ("issued_date", "ISSUE DATE"), ("file_link", "PDF LINK")),
         print_cols=("system", "pid_drawing_no", "drawing_no", "title", "issued_date")),
+    "testpackage": dict(
+        label="Test Package", table="test_package_master", view=None, key=("drawing_no",),
+        search=("drawing_no", "title", "system"), eq=("system",), rev=False, size=False, order=("id",),
+        cols=(("system", "SYSTEM"), ("pid_drawing_no", "PID DRAWING NO."), ("drawing_no", "TEST PACKAGE"),
+              ("title", "DESCRIPTION"), ("issued_date", "ISSUE DATE"), ("file_link", "PDF LINK")),
+        print_cols=("system", "pid_drawing_no", "drawing_no", "title", "issued_date")),
 }
 COMPUTED_COLS = {"size", "pid_drawing_no"}
 PAGE = 1000  # Drawing DB 프로젝트는 PostgREST 1회 최대 1,000행
@@ -381,7 +387,7 @@ def _decorate(cat, rows):
     else:
         for r in rows:
             _sanitize_link(r)
-    if cat == "markedpid":
+    if cat in ("markedpid", "testpackage"):
         pids = _pid_by_system()
         for r in rows:
             r["pid_drawing_no"] = pids.get(r.get("system"))
@@ -389,7 +395,7 @@ def _decorate(cat, rows):
 
 def _select_cols(cat):
     cols = [c for c, _ in CATS[cat]["cols"] if c not in COMPUTED_COLS]
-    for extra in ("id", "line_no" if CATS[cat]["size"] else None, "system" if cat == "markedpid" else None):
+    for extra in ("id", "line_no" if CATS[cat]["size"] else None, "system" if cat in ("markedpid", "testpackage") else None):
         if extra and extra not in cols:
             cols.append(extra)
     return ",".join(cols)
@@ -583,6 +589,12 @@ def api_markedpid_filters():
     return jsonify({"systems": _safe_distinct("marked_pid_master", "system")})
 
 
+@app.route("/api/testpackage/filters")
+@cached_get
+def api_testpackage_filters():
+    return jsonify({"systems": _safe_distinct("test_package_master", "system")})
+
+
 @app.route("/api/<cat>/history")
 def api_history(cat):
     # 같은 도면의 모든 Revision(구 Revision 포함)과 각 PDF
@@ -754,7 +766,8 @@ def _parse_upload(cat, file):
         return [_row(drawing_no=_pick(r, "Drawing No"), system=_pick(r, "System"), title=_pick(r, "Title"),
                      revision=_pick(r, "Rev."), issued_date=_date(r.get("Date")))
                 for r in _read_excel(file, 1)]
-    return [_row(drawing_no=_pick(r, "MARKED PID"), system=_pick(r, "SYSTEM"), title=_pick(r, "DESCRIPTION"),
+    no_col = "TEST PACKAGE" if cat == "testpackage" else "MARKED PID"
+    return [_row(drawing_no=_pick(r, no_col), system=_pick(r, "SYSTEM"), title=_pick(r, "DESCRIPTION"),
                  issued_date=_date(r.get("DATE")))
             for r in _read_excel(file, 0)]
 
@@ -855,6 +868,10 @@ def _fetch_cloudinary_all(resource_type="image"):
 
 def _link_candidates(cat, row, is_latest):
     # 도면 행에 맞는 Cloudinary 파일명 후보(우선순위 순)
+    if cat == "testpackage":
+        # PDF 파일명이 도면번호가 아니라 계통명(Potable_Water_System 등)이라 지금 링크의 파일명도 후보로 둔다.
+        link = str(row.get("file_link") or "")
+        return [str(row["drawing_no"]).strip()] + ([link.rsplit("/", 1)[-1].rsplit(".", 1)[0]] if link else [])
     if cat not in ("iso", "support"):
         return [str(row["drawing_no"]).strip()]
     if cat == "iso":

@@ -66,3 +66,9 @@ ALTER TABLE drawing.marked_pid_master  ADD COLUMN IF NOT EXISTS updated_at times
 - 5) 브라우저에서 찾은 버그: 서버 재시작 직후 Support 탭에 PDF 연결률이 ISO 값(100%)으로 남아 보였다. 탭을 바꿀 때 TOTAL만 비우고 PDF·Revision 칩은 비우지 않았고, Support 통계 첫 계산에 약 3초가 걸렸기 때문이다. 탭 전환 시 모두 비우고, 서버 시작 시 Support 통계도 미리 계산하도록 했다. 수정 후 즉시 `—` → 5.2%, 콘솔 경고 0.
 - 운영 장애(2026-09-28, push 87facc5 직후): 모든 API가 500을 냈다(`partially initialized module 'httpcore' ... has no attribute 'ConnectionPool'`). Render는 requirements에 버전 고정이 없어 httpx 0.28.1을 설치하는데, 0.28은 첫 연결을 만들 때 httpcore를 import한다. 이번에 추가한 시작 시 선계산 스레드와 첫 요청이 동시에 첫 연결을 만들면서 반쯤 초기화된 모듈이 남은 것으로 판단했다. 수정: `get_client()`에 잠금을 걸고, 모듈 로드 때 메인 스레드에서 첫 조회를 끝낸 뒤 선계산 스레드를 시작한다. Render와 같은 버전의 가상환경(httpx 0.28.1)에서 동시 요청 18건×3회 모두 성공했다. 수정 전 코드는 로컬에서 재현되지 않았다(타이밍 문제).
 - 1차 수정(a20f1a2) 배포 뒤에는 응답이 아예 없었다(모든 경로 90초 타임아웃). 모듈 로드 중 첫 조회·스레드 시작이 gunicorn 기동을 막은 것으로 보인다(Render 로그는 확인하지 못함). 2차 수정: 시작 시 선계산 스레드와 첫 조회를 모두 없애 예전 방식(첫 요청 때 캐시 채움)으로 되돌리고, 로드 시점에 `importlib.import_module("httpcore")`만 해 동시 첫 연결 경합을 없앴다. 클라이언트 생성 잠금은 유지. 대가로 서버 재시작 직후 첫 접속의 필터·통계 계산이 1~3초 더 걸린다.
+
+## Test Package 탭 (2026-10-08)
+- Marked PID 탭을 그대로 복사했다. CATS `testpackage`, 테이블 `drawing.test_package_master`(marked_pid_master와 `LIKE … INCLUDING ALL`로 같은 구조, RLS 켬, service_role GRANT). 생성 SQL은 `scripts_tmp/test_package_master.sql`이고 사용자가 SQL Editor에서 실행한다.
+- 업로드 Excel 머리글은 `NO. / SYSTEM / TEST PACKAGE / DESCRIPTION / DATE`.
+- PDF 파일명이 도면번호가 아니라 계통명(`Potable_Water_System` 등)이다. Sync Links가 링크를 지우지 않도록 testpackage만 지금 링크의 파일명을 후보에 넣는다(`_link_candidates`).
+- 도면번호는 Marked PID처럼 `CCGT-TP-BOP-{SYS}-XXX`로 정했다. PDF 안 번호는 PW-001, RW-001~003(한 파일에 3개), CCW-001이다. 설명은 `{계통명} System Pressure Test Package`, 발행일은 등록일(2026-10-08).
