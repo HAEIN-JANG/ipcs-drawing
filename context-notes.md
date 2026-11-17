@@ -82,3 +82,8 @@ ALTER TABLE drawing.marked_pid_master  ADD COLUMN IF NOT EXISTS updated_at times
 - 사용자 지시로 051-1/-2 는 최신 Version을 VOID 로만 등록: C03 행(id 6796, 6798) 삭제, VOID 행(6797, 6799)만 유지.
 - 사용자 지시로 VOID 행(6797, 6799)에 C03 PDF file_link 연결.
 - 2026-11-17 사용자 지시로 위 N2 등록을 전부 원상 복구: dwg_iso 6797·6799·6800 삭제(6796·6798은 앞서 삭제됨, 백업 `Reports/n2_rollback_backup_261117_184731.json`), Cloudinary `{dn}_C03` PDF 3개 삭제. ipcs-control에서 같은 날 지워진 LN-051-1/-2 조인트 15행·서포트 8행은 `ipcs-control/Reports/VOID_20261116_LN-051_backup.json`으로 같은 id로 복구(생성 컬럼 completed·di·joint_no_num·pipe_size는 제외하고 INSERT, 값 일치 확인).
+
+## 2026-11-17 SB 계통 연결·필터, 구 VOID 행 삭제
+- Cloudinary `IPCS_Drawing/SB/Large`(59)·`Small`(5) PDF 64개는 dwg_iso에 이미 system='SB'로 등록돼 있었다. Small 5건은 오늘 재업로드로 버전만 달라져 file_link를 새 URL로 갱신(백업 `Reports/sb_small_link_backup_261117_195449.json`).
+- System 필터 목록 `SYSTEMS`가 고정 목록이라 SB가 빠져 있어 추가했다(ISO·Support 공용). 앞으로 새 계통이 생기면 이 목록에도 넣어야 한다.
+- 사용자 지시로 `CCP-W-B251-PI-140-LN-051-1/-2`의 VOID 행(id 6121·6122)을 삭제(백업 `Reports/void_b251_ln051_delete_backup_261117_195829.json`). 두 도면은 C01A가 최신으로 보인다.
