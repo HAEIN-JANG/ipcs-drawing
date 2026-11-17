@@ -66,7 +66,7 @@ SUPABASE_KEY = os.environ.get("SUPABASE_KEY", "")
 WRITE_PASSWORD = os.environ.get("WRITE_PASSWORD", "")
 
 SYSTEMS = ["AS", "ATM", "CCW", "CD", "DW", "FG", "FGH", "FO", "FW", "GT MISC",
-           "HP", "HW", "IA", "LO", "LP", "N2", "PW", "RW", "SA", "SS", "ST MISC", "SW", "WWT"]
+           "HP", "HW", "IA", "LO", "LP", "N2", "PW", "RW", "SA", "SB", "SS", "ST MISC", "SW", "WWT"]
 SUPPORT_TYPES = ["TYPICAL", "SPECIAL", "G", "GS", "U", "US", "W", "WS"]
 SUPPORT_TYPE_PREFIXES = ("G", "GS", "U", "US", "W", "WS")
 
