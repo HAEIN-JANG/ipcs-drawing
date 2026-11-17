@@ -81,3 +81,4 @@ ALTER TABLE drawing.marked_pid_master  ADD COLUMN IF NOT EXISTS updated_at times
 - 되돌리기: Reports/n2_c03_inserted_*.json 의 id 삭제. 스크립트 scripts_tmp/register_n2_c03_20261116.py
 - 사용자 지시로 051-1/-2 는 최신 Version을 VOID 로만 등록: C03 행(id 6796, 6798) 삭제, VOID 행(6797, 6799)만 유지.
 - 사용자 지시로 VOID 행(6797, 6799)에 C03 PDF file_link 연결.
+- 2026-11-17 사용자 지시로 위 N2 등록을 전부 원상 복구: dwg_iso 6797·6799·6800 삭제(6796·6798은 앞서 삭제됨, 백업 `Reports/n2_rollback_backup_261117_184731.json`), Cloudinary `{dn}_C03` PDF 3개 삭제. ipcs-control에서 같은 날 지워진 LN-051-1/-2 조인트 15행·서포트 8행은 `ipcs-control/Reports/VOID_20261116_LN-051_backup.json`으로 같은 id로 복구(생성 컬럼 completed·di·joint_no_num·pipe_size는 제외하고 INSERT, 값 일치 확인).
